@@ -308,6 +308,222 @@ mod tests {
     }
 }
 
+/// Fault tests for the recording path (plan task P0-T04). They feed synthetic audio through the real
+/// writer and never open an input device. Tests named `finding_` pin today's behaviour so that a
+/// later repair (plan P3-R03) has to change them on purpose.
+#[cfg(test)]
+mod fault_tests {
+    use super::*;
+
+    fn temp(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("soundcraft-fault-{name}-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
+    /// A recorder with no input device behind it, so the whole arm and finish path can run.
+    fn deviceless(ring_samples: usize, channels: usize, rate: u32) -> Recorder {
+        let shared = Arc::new(Shared { armed: AtomicBool::new(false), ring: CaptureRing::new(ring_samples), dropped: AtomicUsize::new(0) });
+        Recorder {
+            shared,
+            monitor: InputRing::new(channels, rate),
+            _stream: None,
+            device_name: "test".into(),
+            sample_rate: rate,
+            channels,
+            writer: None,
+        }
+    }
+
+    /// Frames the file holds, from its length once the header is taken off (float32 samples).
+    fn frames_on_disk(path: &PathBuf, channels: usize) -> u64 {
+        let header = soundcraft_audio_io::wav_float_header(channels, 48_000, 0).unwrap().len() as u64;
+        (std::fs::metadata(path).unwrap().len().saturating_sub(header)) / (4 * channels as u64)
+    }
+
+    fn frames_in_header(path: &PathBuf) -> usize {
+        soundcraft_audio_io::decode(&std::fs::read(path).unwrap(), None).unwrap().1.channels[0].len()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_read_only_folder_refuses_the_take_and_names_the_path() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp("readonly");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let path = dir.join("Vox_01.wav");
+        let err = TakeWriter::create(TrackId(1), vec![0], path.clone(), 48_000).err().expect("must fail");
+        assert!(err.contains("Vox_01.wav"), "the message names the file: {err}");
+        assert!(!path.exists(), "no partial file");
+        // Through the recorder: arm fails, nothing is armed, and a later arm elsewhere still works.
+        let mut r = deviceless(1 << 12, 1, 48_000);
+        assert!(r.arm(vec![(TrackId(1), vec![0], path)]).is_err());
+        assert!(!r.shared.armed.load(Ordering::Acquire), "a failed arm must not leave the recorder armed");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let other = temp("readonly-ok").join("Vox_02.wav");
+        assert!(r.arm(vec![(TrackId(1), vec![0], other)]).is_ok());
+        let _ = r.finish();
+    }
+
+    #[test]
+    fn the_whole_path_without_a_device_keeps_every_sample() {
+        let dir = temp("path");
+        let mut r = deviceless(1 << 16, 2, 48_000);
+        r.arm(vec![(TrackId(1), vec![1], dir.join("A.wav"))]).unwrap();
+        let input: Vec<f32> = (0..2 * 9_600).map(|i| (i % 1000) as f32 / 1000.0).collect();
+        let mut owed = 0;
+        for block in input.chunks(2 * 480) {
+            r.shared.capture(block, &mut owed);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let (takes, problem) = r.finish();
+        assert_eq!(problem, None);
+        let right: Vec<f32> = input.iter().skip(1).step_by(2).copied().collect();
+        assert_eq!(soundcraft_audio_io::decode(&std::fs::read(&takes[0].1).unwrap(), None).unwrap().1.channels, vec![right]);
+    }
+
+    #[test]
+    fn finding_overflow_is_reported_only_when_the_take_ends() {
+        let dir = temp("overflow");
+        let mut r = deviceless(8, 1, 48_000); // a ring of 8 samples: any larger block overflows it
+        r.arm(vec![(TrackId(1), vec![0], dir.join("A.wav"))]).unwrap();
+        let mut owed = 0;
+        r.shared.capture(&[0.5; 4_800], &mut owed);
+        assert!(r.shared.dropped.load(Ordering::Relaxed) > 4_000, "the loss is counted while recording...");
+        // ...but nothing in the recorder's public surface exposes it before `finish`.
+        let (_takes, problem) = r.finish();
+        let problem = problem.expect("a loss must be reported at the end");
+        assert!(problem.contains("ms of input lost"), "{problem}");
+    }
+
+    #[test]
+    fn finding_a_failed_write_is_silent_until_the_end_and_the_loss_is_not_counted() {
+        let dir = temp("writefail");
+        let path = dir.join("A.wav");
+        TakeWriter::create(TrackId(1), vec![0], path.clone(), 48_000).unwrap();
+        // Reopen the file read-only so every write fails, as a full disk or a vanished volume would.
+        let broken = TakeWriter {
+            id: TrackId(1),
+            inputs: vec![0],
+            path: path.clone(),
+            file: File::open(&path).unwrap(),
+            rate: 48_000,
+            frames: 0,
+            error: None,
+        };
+        let shared = Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 16), dropped: AtomicUsize::new(0) });
+        let sh = Arc::clone(&shared);
+        let writer = std::thread::spawn(move || write_takes(&sh, vec![broken], 1));
+        let mut owed = 0;
+        for _ in 0..50 {
+            shared.capture(&[0.25; 480], &mut owed); // 0.5 s of audio, 10 ms per block
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let still_counted_as_lost = shared.dropped.load(Ordering::Relaxed);
+        shared.armed.store(false, Ordering::Release);
+        let (takes, problem) = writer.join().unwrap();
+        assert_eq!(still_counted_as_lost, 0, "the ring kept draining, so nothing looked lost while 0.5 s was being discarded");
+        assert!(problem.is_some(), "the error does surface, at the end");
+        assert!(takes.is_empty(), "a take with no frames is removed");
+    }
+
+    #[test]
+    fn finding_a_crash_leaves_audio_the_header_does_not_cover() {
+        let dir = temp("crash");
+        let path = dir.join("A.wav");
+        let mut t = TakeWriter::create(TrackId(1), vec![0], path.clone(), 48_000).unwrap();
+        t.write(&vec![0.5; 4_800], 1);
+        t.write_header(); // the once-a-second header refresh
+        t.write(&vec![0.5; 2_400], 1);
+        drop(t); // an app crash: no final header, nothing buffered in the process (File is unbuffered)
+        assert_eq!(frames_in_header(&path), 4_800, "a reader trusting the header stops at the last refresh");
+        assert_eq!(frames_on_disk(&path, 1), 7_200, "but all the written audio is on disk");
+    }
+
+    /// Child half of the real `kill -9` test: records a paced 48 kHz mono take until killed.
+    #[test]
+    #[ignore = "helper process for kill_nine_*; not a test on its own"]
+    fn child_records_until_killed() {
+        let Ok(dir) = std::env::var("SC_KILL_DIR") else { return };
+        let path = PathBuf::from(dir).join("A.wav");
+        let take = TakeWriter::create(TrackId(1), vec![0], path, 48_000).unwrap();
+        let shared = Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 18), dropped: AtomicUsize::new(0) });
+        let sh = Arc::clone(&shared);
+        std::thread::spawn(move || write_takes(&sh, vec![take], 1));
+        let mut owed = 0;
+        loop {
+            shared.capture(&[0.25; 480], &mut owed);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// A real SIGKILL mid-take. Run with `cargo test -p soundcraft-playback kill_nine -- --ignored --nocapture`.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "spawns and kills a child process and takes about 4 s"]
+    fn kill_nine_loses_at_most_the_last_header_interval() {
+        let dir = temp("kill9");
+        let exe = std::env::current_exe().unwrap();
+        let mut child = std::process::Command::new(exe)
+            .args(["--exact", "record::fault_tests::child_records_until_killed", "--ignored", "--nocapture"])
+            .env("SC_KILL_DIR", &dir)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        // The header refreshes about once a second, so where in that cycle the kill lands decides the
+        // lag; `SC_KILL_AFTER_MS` lets a sweep sample the whole cycle.
+        let after: u64 = std::env::var("SC_KILL_AFTER_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(3_500);
+        std::thread::sleep(Duration::from_millis(after));
+        child.kill().unwrap(); // SIGKILL
+        child.wait().unwrap();
+        let path = dir.join("A.wav");
+        let (header, disk) = (frames_in_header(&path) as f64, frames_on_disk(&path, 1) as f64);
+        let (lost_to_header, total) = ((disk - header) / 48_000.0, disk / 48_000.0);
+        println!(
+            "KILL-9 RESULT (killed at {after} ms): {total:.2} s on disk; header covers {:.2} s; header lag {lost_to_header:.2} s",
+            header / 48_000.0
+        );
+        assert!(total > 1.0, "the child recorded for a while ({total:.2} s)");
+        assert!(lost_to_header <= 1.2, "the header trails the data by at most about one refresh interval: {lost_to_header:.2} s");
+        assert!(frames_in_header(&path) > 0, "the file still decodes");
+    }
+
+    /// Fill a small volume. Needs a nearly full or tiny volume: see the plan note for a RAM disk recipe.
+    /// Run with `SC_FULL_DISK_DIR=/Volumes/RAMDISK cargo test -p soundcraft-playback disk_full -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "needs SC_FULL_DISK_DIR pointing at a small volume"]
+    fn disk_full_is_reported_but_only_at_the_end() {
+        let Ok(dir) = std::env::var("SC_FULL_DISK_DIR") else { return };
+        let path = PathBuf::from(dir).join("Full_01.wav");
+        let take = TakeWriter::create(TrackId(1), vec![0], path.clone(), 48_000).unwrap();
+        let shared = Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 18), dropped: AtomicUsize::new(0) });
+        let sh = Arc::clone(&shared);
+        let writer = std::thread::spawn(move || write_takes(&sh, vec![take], 1));
+        let mut owed = 0;
+        let started = Instant::now();
+        let mut lost_while_recording = 0usize;
+        for _ in 0..2_000 {
+            shared.capture(&[0.25; 480], &mut owed);
+            lost_while_recording = shared.dropped.load(Ordering::Relaxed);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let recorded_for = started.elapsed().as_secs_f64();
+        shared.armed.store(false, Ordering::Release);
+        let (takes, problem) = writer.join().unwrap();
+        let on_disk = std::fs::metadata(&path)
+            .map(|m| {
+                m.len().saturating_sub(soundcraft_audio_io::wav_float_header(1, 48_000, 0).map_or(44, |h| h.len() as u64)) as f64 / 4.0 / 48_000.0
+            })
+            .unwrap_or(0.0);
+        println!(
+            "DISK-FULL RESULT: fed {recorded_for:.1} s, {on_disk:.1} s reached the disk, counted as lost while recording: {lost_while_recording}, reported at end: {problem:?}, takes returned: {}",
+            takes.len()
+        );
+        assert!(problem.is_some(), "a full disk must be reported at the end");
+    }
+}
+
 /// Ring state behind the lock: interleaved input frames at the input device's rate, plus the
 /// fractional read position (in input frames) of the next output sample.
 struct RingState {
