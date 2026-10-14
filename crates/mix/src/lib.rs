@@ -198,7 +198,11 @@ struct Strip {
     /// The pool audio handed to the instrument with `set_sample` (sample-playing instruments).
     sample: Option<Arc<SourceAudio>>,
     /// MIDI notes currently sounding on the instrument (pitch), for note-offs at stops/seek.
-    held: Vec<u8>,
+    /// Notes sounding on the instrument: pitch and the sample their note-off is due at. Kept apart
+    /// from clips so a note-off still arrives after its clip stops overlapping the block.
+    held: Vec<(u8, Samples)>,
+    /// Reused key buffer for MIDI real-time property lookups (no allocation per block).
+    key: String,
     muted: bool,
     gr: f32,
     /// Per-clip effect chains (Clip Effects) and a scratch buffer to render clips into.
@@ -289,7 +293,8 @@ impl Strip {
             plugins: Vec::new(),
             instrument: None,
             sample: None,
-            held: Vec::new(),
+            held: Vec::with_capacity(MAX_HELD),
+            key: String::with_capacity(48),
             muted: false,
             gr: 0.0,
             clip_fx: HashMap::new(),
@@ -1010,7 +1015,7 @@ fn process_strip(
                 if let Some(ins) = &t.instrument {
                     apply_params(inst, ins, t, INSTRUMENT_SLOT, pos);
                 }
-                schedule_notes(s, t, pos, frames, inst, &mut strip.held);
+                schedule_notes(s, t, pos, frames, inst, &mut strip.held, &mut strip.key);
                 if strip.buf.len() >= 2 {
                     inst.plugin.process(&mut strip.buf, frames);
                 } else if let Some(c0) = strip.buf.first_mut() {
@@ -1421,10 +1426,23 @@ fn render_clip(s: &Session, clip: &Clip, pos: Samples, frames: usize, buf: &mut 
     }
 }
 
-/// Send note on/offs for MIDI clips overlapping the block.
-fn schedule_notes(s: &Session, t: &Track, pos: Samples, frames: usize, inst: &mut PluginSlot, held: &mut Vec<u8>) {
+/// Most simultaneous notes tracked per instrument.
+const MAX_HELD: usize = 128;
+
+/// Send note on/offs for MIDI clips overlapping the block, and the offs still owed from earlier
+/// blocks (a note that ends on a block edge, or whose clip was trimmed or removed while sounding).
+fn schedule_notes(s: &Session, t: &Track, pos: Samples, frames: usize, inst: &mut PluginSlot, held: &mut Vec<(u8, Samples)>, key: &mut String) {
+    use std::fmt::Write;
     let sr = s.sample_rate;
     let end = pos.saturating_add(frames as i64);
+    held.retain(|&(pitch, off)| {
+        if off < end {
+            inst.plugin.note_off(usize::try_from(off.saturating_sub(pos)).unwrap_or(0), pitch);
+            false
+        } else {
+            true
+        }
+    });
     for clip in t.clips() {
         if clip.muted {
             continue;
@@ -1435,7 +1453,11 @@ fn schedule_notes(s: &Session, t: &Track, pos: Samples, frames: usize, inst: &mu
         }
         let base = s.tempo.samples_to_ticks(clip.start, sr);
         // MIDI Real-Time Properties (non-destructive velocity/transpose/duration/delay).
-        let rtp = |name: &str, d: f64| s.edit.value(&format!("rtp.{}.{name}", t.id.0), d);
+        let mut rtp = |name: &str, d: f64| {
+            key.clear();
+            let _ = write!(key, "rtp.{}.{name}", t.id.0);
+            s.edit.value(key, d)
+        };
         let (dv, dp, dur, delay) = if s.edit.values.is_empty() {
             (0i64, 0i64, 1.0f64, 0i64)
         } else {
@@ -1459,13 +1481,11 @@ fn schedule_notes(s: &Session, t: &Track, pos: Samples, frames: usize, inst: &mu
             }
             if on >= pos && on < end {
                 inst.plugin.note_on(usize::try_from(on - pos).unwrap_or(0), n.pitch, n.velocity);
-                if !held.contains(&n.pitch) && held.len() < 128 {
-                    held.push(n.pitch);
+                if off < end {
+                    inst.plugin.note_off(usize::try_from(off.saturating_sub(pos)).unwrap_or(0), n.pitch);
+                } else if held.len() < MAX_HELD {
+                    held.push((n.pitch, off));
                 }
-            }
-            if off >= pos && off < end {
-                inst.plugin.note_off(usize::try_from(off - pos).unwrap_or(0), n.pitch);
-                held.retain(|p| *p != n.pitch);
             }
         }
     }
@@ -2190,6 +2210,80 @@ mod tests {
         m.render(&s, 0, 512, &mut out);
         m.render(&s, 4096, 512, &mut out);
         assert_eq!(out[0].iter().filter(|x| x.abs() > 0.1).count(), 0);
+    }
+
+    /// Wraps a plugin and counts the note events it receives.
+    struct NoteCounter {
+        inner: Box<dyn Plugin>,
+        on: Arc<std::sync::atomic::AtomicUsize>,
+        off: Arc<std::sync::atomic::AtomicUsize>,
+    }
+    impl Plugin for NoteCounter {
+        fn info(&self) -> &'static soundcraft_dsp::PluginInfo {
+            self.inner.info()
+        }
+        fn prepare(&mut self, sr: f32, mb: usize, ch: usize) {
+            self.inner.prepare(sr, mb, ch);
+        }
+        fn reset(&mut self) {
+            self.inner.reset();
+        }
+        fn set_param(&mut self, id: &str, v: f32) -> bool {
+            self.inner.set_param(id, v)
+        }
+        fn param(&self, id: &str) -> Option<f32> {
+            self.inner.param(id)
+        }
+        fn process(&mut self, io: &mut [Vec<f32>], n: usize) {
+            self.inner.process(io, n);
+        }
+        fn note_on(&mut self, _: usize, _: u8, _: u8) {
+            self.on.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn note_off(&mut self, _: usize, _: u8) {
+            self.off.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// Plays `notes` (start, length in ticks) from a clip of `clip_len` samples through eight
+    /// 512-sample blocks; returns (note-ons, note-offs) the instrument received.
+    fn note_events(notes: &[(i64, i64, u8)], clip_len: i64) -> (usize, usize) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let mut s = Session::default();
+        let t = s.add_track(TrackKind::Instrument, ChannelFormat::Stereo, None);
+        let mut seq = soundcraft_midi::Sequence::default();
+        for &(start, length, pitch) in notes {
+            seq.notes.push(soundcraft_midi::Note { start, length, pitch, velocity: 100, release_velocity: 0, channel: 0 });
+        }
+        let tr = s.track_mut(t).unwrap();
+        tr.instrument = Some(Insert::new("clap:test.notes"));
+        tr.playlist_mut().unwrap().clips.push(Clip::midi(ClipId(100), "n", 0, clip_len, seq));
+        let (on, off) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let mut plugin = NoteCounter { inner: soundcraft_dsp::create("gain").unwrap(), on: on.clone(), off: off.clone() };
+        plugin.prepare(48000., 512, 2);
+        let mut m = MixEngine::new(48000., 512);
+        m.set_external_instances(true);
+        m.adopt(vec![PreparedInstance { track: t, slot: INSTRUMENT_SLOT, id: "clap:test.notes".into(), ch: 2, plugin: Box::new(plugin) }]);
+        let mut out = vec![vec![0.; 512]; 2];
+        for i in 0..8 {
+            m.render(&s, i * 512, 512, &mut out);
+        }
+        (on.load(Ordering::SeqCst), off.load(Ordering::SeqCst))
+    }
+
+    #[test]
+    fn a_note_ending_on_a_block_edge_still_gets_its_note_off() {
+        assert_eq!(note_events(&[(0, 960, 60)], 512), (1, 1));
+    }
+
+    #[test]
+    fn every_overlapping_same_pitch_note_gets_its_own_note_off() {
+        assert_eq!(note_events(&[(0, 40, 60), (10, 40, 60)], 2000), (2, 2));
+    }
+
+    #[test]
+    fn a_note_running_past_a_trimmed_clip_end_is_released() {
+        assert_eq!(note_events(&[(0, 1_000_000, 60)], 1500), (1, 1));
     }
 
     fn synth_session(level_db: f32) -> Session {
