@@ -7,7 +7,7 @@
 //! soundcraft-cli script FILE [--in S | --demo] [--save S] [--bounce OUT]   (one `ID JSON` per line)
 //! soundcraft-cli commands [FILTER]               list commands
 //! soundcraft-cli describe ID                     one command's details
-//! soundcraft-cli app [--port P] METHOD [JSON]     call a running app's control channel
+//! soundcraft-cli app [--port P] [--token-file F] METHOD [JSON]   call a running app's control channel
 //! soundcraft-cli mcp [--connect PORT] [--demo]    MCP server on stdio
 //! soundcraft-cli parity [--write PATH]            parity report (markdown)
 //! soundcraft-cli plugins                          list built-in plugins
@@ -333,7 +333,7 @@ fn app(args: &[String]) -> ExitCode {
     let positional: Vec<&String> = args
         .iter()
         .enumerate()
-        .filter(|(i, a)| !(a.starts_with("--") || (*i > 0 && args.get(i - 1).is_some_and(|p| p == "--port"))))
+        .filter(|(i, a)| !(a.starts_with("--") || (*i > 0 && args.get(i - 1).is_some_and(|p| p == "--port" || p == "--token-file"))))
         .map(|(_, a)| a)
         .collect();
     let Some(method) = positional.first() else { return fail("app [--port P] METHOD [JSON]") };
@@ -344,7 +344,10 @@ fn app(args: &[String]) -> ExitCode {
         },
         None => json!({}),
     };
-    let mut r = Remote::new(&port);
+    let mut r = match remote(&port, args) {
+        Ok(r) => r,
+        Err(e) => return fail(e),
+    };
     // A bare command id is shorthand for engine.execute. Control-channel methods stay methods.
     let (m, p) = app_request(method, params);
     match r.call(&m, p) {
@@ -356,11 +359,27 @@ fn app(args: &[String]) -> ExitCode {
     }
 }
 
+/// A client for the app on `port`, authenticating with the token in `--token-file` when given.
+fn remote(port: &str, args: &[String]) -> Result<Remote, String> {
+    let r = Remote::new(port);
+    match arg_value(args, "--token-file") {
+        Some(path) => {
+            let token = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+            Ok(r.with_token(token.trim()))
+        }
+        None => Ok(r),
+    }
+}
+
 fn mcp(args: &[String]) -> ExitCode {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let r = if let Some(port) = arg_value(args, "--connect") {
-        let mut s = Server::new(Remote::new(&port));
+        let r = match remote(&port, args) {
+            Ok(r) => r,
+            Err(e) => return fail(e),
+        };
+        let mut s = Server::new(r);
         s.serve(stdin.lock(), stdout.lock())
     } else {
         let e = if args.iter().any(|a| a == "--demo") { soundcraft_engine::demo::demo_engine() } else { Engine::default() };

@@ -67,6 +67,8 @@ impl Backend for Headless {
 /// A TCP client for a running app's control channel.
 pub struct Remote {
     addr: String,
+    /// Sent as the first message of every connection when the app runs in assistant mode.
+    token: Option<String>,
     conn: Option<(TcpStream, BufReader<TcpStream>)>,
     next_id: u64,
 }
@@ -75,7 +77,7 @@ impl Remote {
     /// `target` is a port (`7979`) or `host:port`.
     pub fn new(target: &str) -> Self {
         let addr = if target.contains(':') { target.to_string() } else { format!("127.0.0.1:{target}") };
-        Remote { addr, conn: None, next_id: 1 }
+        Remote { addr, token: None, conn: None, next_id: 1 }
     }
 
     /// True when the server has already closed the idle connection (a peek reads end of file), so
@@ -93,6 +95,12 @@ impl Remote {
         stale || s.set_nonblocking(false).is_err()
     }
 
+    /// Authenticate with `token` (read from the app's `--control-token-file`) on every connection.
+    pub fn with_token(mut self, token: impl Into<String>) -> Self {
+        self.token = Some(token.into());
+        self
+    }
+
     fn connect(&mut self) -> Result<(), String> {
         if self.is_stale() {
             self.conn = None;
@@ -106,6 +114,15 @@ impl Remote {
         s.set_read_timeout(Some(Duration::from_secs(120))).map_err(|e| e.to_string())?;
         let r = s.try_clone().map_err(|e| e.to_string())?;
         self.conn = Some((s, BufReader::new(r)));
+        if let Some(token) = self.token.clone() {
+            // The reply carries no secret; a refusal ends the attempt with the server's reason.
+            if let Err(f) = self.send("auth", &json!({"token": token})) {
+                self.conn = None;
+                return Err(match f {
+                    Failure::Rejected(e) | Failure::NotSent(e) | Failure::Unknown(e) => format!("authentication with the app failed: {e}"),
+                });
+            }
+        }
         Ok(())
     }
 
@@ -113,6 +130,11 @@ impl Remote {
     /// is safe to send again; `Err(Failure::Unknown)` means the server may have executed it.
     fn roundtrip(&mut self, method: &str, params: &Value) -> Result<Value, Failure> {
         self.connect().map_err(Failure::NotSent)?;
+        self.send(method, params)
+    }
+
+    /// Write one request on the open connection and read its reply.
+    fn send(&mut self, method: &str, params: &Value) -> Result<Value, Failure> {
         let id = self.next_id;
         self.next_id += 1;
         let line = json!({"id": id, "method": method, "params": params}).to_string();
@@ -252,5 +274,29 @@ mod retry_tests {
         assert!(c.call("session.inspect", json!({})).is_ok());
         assert_eq!(applied.load(Ordering::SeqCst), 2);
         let _ = h.join();
+    }
+
+    #[test]
+    fn a_token_is_sent_first_on_every_connection() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let h = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut r = BufReader::new(stream.try_clone().unwrap());
+            let mut methods = Vec::new();
+            for _ in 0..2 {
+                let mut text = String::new();
+                r.read_line(&mut text).unwrap();
+                let msg: Value = serde_json::from_str(&text).unwrap();
+                methods.push((msg["method"].as_str().unwrap_or("").to_string(), msg["params"]["token"].as_str().map(str::to_string)));
+                writeln!(stream, "{}", json!({"id": msg["id"], "ok": true, "result": {}})).unwrap();
+            }
+            methods
+        });
+        let mut c = Remote::new(&addr).with_token("t0ken");
+        assert!(c.call("session.inspect", json!({})).is_ok());
+        let seen = h.join().unwrap();
+        assert_eq!(seen[0], ("auth".to_string(), Some("t0ken".to_string())));
+        assert_eq!(seen[1].0, "session.inspect");
     }
 }

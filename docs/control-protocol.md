@@ -35,6 +35,26 @@ Newline-delimited JSON over TCP on `127.0.0.1`. One request per line, one reply 
 
 Errors: `{"id": 1, "ok": false, "error": "bad parameters for `mix.volume`: no track named `Nope`"}`.
 
+### Connection rules
+
+- The **first line** of every connection must be a JSON object. Anything else (an HTTP request from a
+  web page, a WebSocket upgrade) closes the connection unanswered and forwards nothing, so a browser
+  cannot drive the app.
+- Lines are size-limited (8 MiB in developer mode) and at most 8 connections are open at once.
+- **Assistant mode** (`soundcraft --control <port> --control-token-file <path>`): the file holds a
+  64-hex-character per-launch token, mode `0600`; the app refuses to open the channel if it is
+  missing, malformed or accessible to other users. The first message must be
+  `{"id":N,"method":"auth","params":{"token":"…"}}`; until it succeeds every method answers
+  `unauthenticated` and is not forwarded. Three failed attempts close the connection, silent
+  unauthenticated connections close after 10 s, idle authenticated ones after 10 minutes, and lines
+  over 4 KiB (before auth) or 1 MiB (after) close the connection. Only `session.inspect`,
+  `session.apply` and `session.execution_status` are forwarded; everything else is refused.
+- Clients: `soundcraft-cli app --token-file <path> …` and `soundcraft-cli mcp --connect <port>
+  --token-file <path>` authenticate first. Developer mode (no token file) stays unauthenticated.
+- A client that loses the connection after sending a command does **not** resend it (the app may
+  have applied it): the call fails with "may or may not have applied it". Only read-only methods
+  are retried.
+
 ## Methods
 
 | Method | Params | What it does |

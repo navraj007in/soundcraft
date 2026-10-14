@@ -13,6 +13,24 @@
 
 mod config;
 mod control_server;
+
+/// The control token in `path`: 64 hex characters, in a file only its owner can access.
+fn read_token_file(path: &str) -> Result<String, String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(path).map_err(|e| format!("{path}: {e}"))?.permissions().mode();
+        if mode & 0o077 != 0 {
+            return Err(format!("{path} is accessible to other users (mode {:o}); it must be 0600", mode & 0o777));
+        }
+    }
+    let token = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+    let token = token.trim();
+    if token.len() < 64 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!("{path} does not hold a 64-character hex token"));
+    }
+    Ok(token.to_string())
+}
 #[cfg(any(target_os = "windows", test))]
 mod graphics;
 mod logging;
@@ -208,10 +226,15 @@ fn main() -> eframe::Result {
         .and_then(|i| args.get(i + 1))
         .and_then(|p| p.parse().ok())
         .or_else(|| std::env::var("SOUNDCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok()));
+    // Assistant mode: a per-launch token read from a private file (never the command line or the
+    // environment, which other processes can see). A token file that cannot be trusted leaves the
+    // control channel off rather than falling back to developer mode.
+    let control_token: Option<Result<String, String>> =
+        args.iter().position(|a| a == "--control-token-file").map(|i| args.get(i + 1).ok_or("--control-token-file needs a path".to_string()).and_then(|p| read_token_file(p)));
     let files: Vec<String> = args
         .iter()
         .enumerate()
-        .filter(|(i, a)| !(a.starts_with("--") || (i > &0 && args.get(i - 1).is_some_and(|p| p == "--control"))))
+        .filter(|(i, a)| !(a.starts_with("--") || (i > &0 && args.get(i - 1).is_some_and(|p| p == "--control" || p == "--control-token-file"))))
         .map(|(_, a)| a.clone())
         .collect();
     log::info!("SoundCraft {} ({} {})", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH);
@@ -261,9 +284,14 @@ fn main() -> eframe::Result {
             app.preset_dir = prefs_path().and_then(|p| p.parent().map(|d| d.join("Presets")));
             app.extra.ui_scale = prefs.ui_scale;
             app.ui = prefs;
-            if let Some(port) = control_port {
-                let rx = control_server::start(port, cc.egui_ctx.clone());
-                app = app.with_control(rx);
+            match (control_port, &control_token) {
+                (Some(port), None) => app = app.with_control(control_server::start(port, cc.egui_ctx.clone())),
+                (Some(port), Some(Ok(token))) => {
+                    let cfg = control_server::ControlConfig { port, token: Some(token.clone()), auth_timeout: std::time::Duration::from_secs(10) };
+                    app = app.with_control(control_server::start_with(cfg, cc.egui_ctx.clone()));
+                }
+                (_, Some(Err(e))) => log::error!("control channel not started: {e}"),
+                (None, _) => {}
             }
             for f in &files {
                 open_path(&mut app, f);

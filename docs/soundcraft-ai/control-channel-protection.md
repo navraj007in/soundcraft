@@ -1,7 +1,7 @@
 # Control channel protection: design and tests
 
 **Task:** P0-T07 in the [execution plan](execution-plan.md) · **Implements later in:** P1-E03 · **Feeds:** PRD §10.2, G12 (unauthorised IPC)
-**Version:** 0.1 · **Updated:** 14 October 2026 · **Status:** Design complete; tests written (7 ignored, 1 guard); implementation is P1-E03.
+**Version:** 0.2 · **Updated:** 15 October 2026 · **Status:** §2.2–§2.5 implemented in the server, `--control-token-file` and the client `--token-file`; companion-side token generation (§6 item 4) and the real allowlist methods (§6 item 6) are still open.
 **Code:** branch `spike/control-auth`, `apps/soundcraft/src/control_server.rs` (`protection_tests`).
 
 ## 1. Why this is needed, measured
@@ -128,22 +128,20 @@ Log method name, connection ID and outcome (accepted, refused, closed and why). 
 
 `protection_tests` in `apps/soundcraft/src/control_server.rs` drives a real server over TCP, with a
 stand-in for the UI thread that records every method it is asked to run (`seen`), so each test
-asserts exactly what got past the gate. The server is today's code behind a stand-in `start_with`
-that ignores `token` and `auth_timeout`.
+asserts exactly what got past the gate. The harness starts the production `start_with`.
 
-| Test | Design rule it pins | Today |
+| Test | Design rule it pins | Status |
 |---|---|---|
-| `developer_mode_without_a_token_still_forwards_json_lines` | §2.1: developer mode keeps working | **passes** (guard) |
-| `without_a_token_nothing_reaches_the_ui_thread` | §2.3 rule 2 | fails |
-| `a_wrong_token_is_refused_and_three_failures_close_the_connection` | §2.3 rule 3 | fails |
-| `a_token_from_a_previous_launch_is_refused` | §2.2 per-launch token | fails |
-| `the_right_token_unlocks_the_assistant_allowlist_and_nothing_else` | §2.3 rule 1, §2.4 (13 refused methods, 2 allowed, no token echo) | fails |
-| `an_http_request_carrying_a_json_body_is_not_executed` | §2.5 (runs with and without a token) | fails: **executes `engine.execute`** |
-| `an_oversized_line_closes_the_connection` | §2.3 rule 5 | fails |
-| `a_silent_unauthenticated_connection_is_closed` | §2.3 rule 4 | fails |
+| `developer_mode_without_a_token_still_forwards_json_lines` | §2.1: developer mode keeps working | passes |
+| `without_a_token_nothing_reaches_the_ui_thread` | §2.3 rule 2 | passes |
+| `a_wrong_token_is_refused_and_three_failures_close_the_connection` | §2.3 rule 3 | passes |
+| `a_token_from_a_previous_launch_is_refused` | §2.2 per-launch token | passes |
+| `the_right_token_unlocks_the_assistant_allowlist_and_nothing_else` | §2.3 rule 1, §2.4 (13 refused methods, 2 allowed, no token echo) | passes |
+| `an_http_request_carrying_a_json_body_is_not_executed` | §2.5 (runs with and without a token) | passes |
+| `an_oversized_line_closes_the_connection` | §2.3 rule 5 | passes |
+| `a_silent_unauthenticated_connection_is_closed` | §2.3 rule 4 | passes |
 
-The seven new tests carry `#[ignore = "P1-E03: …"]` so `cargo xtask ci` stays green. Run them with
-`cargo test -p soundcraft --bin soundcraft protection_tests -- --ignored`.
+All eight tests now run in `cargo test -p soundcraft --bin soundcraft protection_tests`; the earlier `#[ignore]` attributes were removed when the server gained the protection.
 
 **Validation that they can pass, and that they notice regressions.** A throwaway reference
 implementation of §2.2–§2.5 in the test module (about 90 lines: bounded reads, first-line HTTP check,
@@ -165,12 +163,11 @@ version; the algorithm above is complete enough to reproduce it.
 
 ## 6. P1-E03 work breakdown
 
-1. Move `ControlConfig` and `start_with` out of the test module; implement §2.2–§2.6 in the server
-   (the validated reference is a starting shape). Remove the `#[ignore]` attributes.
-2. `--control-token-file` in `apps/soundcraft/src/main.rs`; startup checks for the file.
-3. `Remote` and `soundcraft-cli app` / `mcp --connect`: optional `--token-file`, sending `auth` first.
+1. ~~Move `ControlConfig` and `start_with` out of the test module; implement §2.2–§2.6 in the server; remove the `#[ignore]` attributes.~~ Done.
+2. ~~`--control-token-file` in `apps/soundcraft/src/main.rs`; startup checks for the file.~~ Done.
+3. ~~`Remote` and `soundcraft-cli app` / `mcp --connect`: optional `--token-file`, sending `auth` first.~~ Done.
 4. Companion: token generation, private folder and file modes, cleanup of stale files.
-5. Update `docs/control-protocol.md` (modes, handshake, allowlist, the HTTP behaviour change).
+5. ~~Update `docs/control-protocol.md` (modes, handshake, allowlist, the HTTP behaviour change).~~ Done.
 6. Add the real methods to the allowlist as P1-E01, E02 and C07 land.
 
 **Estimate:** roughly 8–12 h (a guess; the gate itself is the small part, the plumbing and the
@@ -193,3 +190,4 @@ companion side are most of it). Generic, so a candidate for an upstream PR as it
 | Version | Date | Change |
 |---|---|---|
 | 0.1 | 14 October 2026 | Design and tests (P0-T07). |
+| 0.2 | 15 October 2026 | Server protection, token file and client token option implemented; tests no longer ignored. |

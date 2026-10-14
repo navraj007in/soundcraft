@@ -1,15 +1,51 @@
 //! Loopback JSON-lines control server: one request per line, one reply per line.
 //! This is the transport the MCP server (`soundcraft-cli mcp --connect PORT`) wraps.
+//!
+//! Two modes (design: `docs/soundcraft-ai/control-channel-protection.md`):
+//! - developer mode (no token): every control method is forwarded;
+//! - assistant mode (a per-launch token): the first message must be `auth`, and only the assistant
+//!   allowlist is forwarded.
+//!
+//! In both modes a connection whose first line is not a JSON object (an HTTP request from a web
+//! page, say) is closed unanswered, reads are bounded, and the number of connections is capped.
 
 use serde_json::{Value, json};
 use soundcraft_ui_egui::ControlRequest;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
+/// How the server is started.
+pub struct ControlConfig {
+    pub port: u16,
+    /// `Some` puts the server in assistant mode: authentication is required and only the assistant
+    /// allowlist is forwarded. `None` is developer mode.
+    pub token: Option<String>,
+    /// How long a connection may stay silent before it has authenticated.
+    pub auth_timeout: Duration,
+}
+
+/// Methods an authenticated assistant connection may call (`auth` is answered by the server).
+const ASSISTANT_ALLOWLIST: [&str; 3] = ["session.inspect", "session.apply", "session.execution_status"];
+const MAX_CONNECTIONS: usize = 8;
+const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
+const IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// Longest line accepted before authentication, after it, and in developer mode.
+const MAX_LINE_PRE_AUTH: usize = 4 * 1024;
+const MAX_LINE_AUTHED: usize = 1024 * 1024;
+const MAX_LINE_DEV: usize = 8 * 1024 * 1024;
+const MAX_AUTH_FAILURES: usize = 3;
+
 pub fn start(port: u16, ctx: egui::Context) -> Receiver<ControlRequest> {
+    start_with(ControlConfig { port, token: None, auth_timeout: AUTH_TIMEOUT }, ctx)
+}
+
+pub fn start_with(cfg: ControlConfig, ctx: egui::Context) -> Receiver<ControlRequest> {
     let (tx, rx) = channel::<ControlRequest>();
+    let port = cfg.port;
     let listener = match TcpListener::bind(("127.0.0.1", port)) {
         Ok(l) => l,
         Err(e) => {
@@ -18,13 +54,28 @@ pub fn start(port: u16, ctx: egui::Context) -> Receiver<ControlRequest> {
         }
     };
     let actual = listener.local_addr().map(|a| a.port()).unwrap_or(port);
-    log::info!("control server listening on 127.0.0.1:{actual}");
+    log::info!("control server listening on 127.0.0.1:{actual} ({} mode)", if cfg.token.is_some() { "assistant" } else { "developer" });
     println!("SOUNDCRAFT_CONTROL_PORT={actual}");
+    let cfg = Arc::new(cfg);
+    let open = Arc::new(AtomicUsize::new(0));
     let spawned = std::thread::Builder::new().name("soundcraft-control".into()).spawn(move || {
         for stream in listener.incoming().flatten() {
-            let tx = tx.clone();
-            let ctx = ctx.clone();
-            let _ = std::thread::Builder::new().name("soundcraft-control-conn".into()).spawn(move || serve(stream, tx, ctx));
+            if open.fetch_add(1, Ordering::AcqRel) >= MAX_CONNECTIONS {
+                open.fetch_sub(1, Ordering::AcqRel);
+                log::warn!("control connection refused: {MAX_CONNECTIONS} already open");
+                continue;
+            }
+            let (tx, ctx, cfg, open) = (tx.clone(), ctx.clone(), Arc::clone(&cfg), Arc::clone(&open));
+            let started = std::thread::Builder::new().name("soundcraft-control-conn".into()).spawn({
+                let open = Arc::clone(&open);
+                move || {
+                    serve(stream, tx, ctx, &cfg);
+                    open.fetch_sub(1, Ordering::AcqRel);
+                }
+            });
+            if started.is_err() {
+                open.fetch_sub(1, Ordering::AcqRel);
+            }
         }
     });
     if let Err(e) = spawned {
@@ -33,25 +84,77 @@ pub fn start(port: u16, ctx: egui::Context) -> Receiver<ControlRequest> {
     rx
 }
 
-fn serve(stream: TcpStream, tx: Sender<ControlRequest>, ctx: egui::Context) {
+/// Compares in time independent of where the inputs first differ.
+fn same_token(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |d, (x, y)| d | (x ^ y)) == 0
+}
+
+/// One line of at most `max` bytes. `Ok(None)` at end of input; an error when the line is longer.
+fn read_line_bounded(r: &mut BufReader<TcpStream>, max: usize) -> std::io::Result<Option<String>> {
+    let mut buf = Vec::new();
+    let n = r.by_ref().take(max as u64 + 1).read_until(b'\n', &mut buf)?;
+    if n == 0 {
+        return Ok(None);
+    }
+    if buf.len() > max && buf.last() != Some(&b'\n') {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "line too long"));
+    }
+    Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
+}
+
+fn serve(stream: TcpStream, tx: Sender<ControlRequest>, ctx: egui::Context, cfg: &ControlConfig) {
     let Ok(read) = stream.try_clone() else { return };
     let mut out = stream;
-    for line in BufReader::new(read).lines() {
-        let Ok(line) = line else { break };
+    let mut input = BufReader::new(read);
+    let mut authed = cfg.token.is_none();
+    let (mut first, mut failures) = (true, 0usize);
+    loop {
+        let (timeout, max) = match (&cfg.token, authed) {
+            (Some(_), false) => (Some(cfg.auth_timeout), MAX_LINE_PRE_AUTH),
+            (Some(_), true) => (Some(IDLE_TIMEOUT), MAX_LINE_AUTHED),
+            (None, _) => (None, MAX_LINE_DEV),
+        };
+        if out.set_read_timeout(timeout).is_err() {
+            break;
+        }
+        let Ok(Some(line)) = read_line_bounded(&mut input, max) else { break };
         if line.trim().is_empty() {
             continue;
+        }
+        // Only a JSON object may open a conversation: anything else (an HTTP request from a web
+        // page, a WebSocket upgrade) is closed without an answer or any forwarding.
+        if std::mem::take(&mut first) && !line.trim_start().starts_with('{') {
+            log::warn!("control connection closed: first line is not a JSON object");
+            break;
         }
         let reply = match serde_json::from_str::<Value>(&line) {
             Ok(msg) => {
                 let id = msg.get("id").cloned().unwrap_or(Value::Null);
                 let method = msg.get("method").and_then(Value::as_str).unwrap_or("").to_string();
                 let params = msg.get("params").cloned().unwrap_or(json!({}));
-                let (req, rrx) = ControlRequest::new(method, params);
-                if tx.send(req).is_err() {
-                    break;
-                }
-                ctx.request_repaint();
-                let mut r = rrx.recv_timeout(Duration::from_secs(90)).unwrap_or_else(|_| json!({"ok": false, "error": "timeout"}));
+                let mut r = if let (Some(token), "auth") = (&cfg.token, method.as_str()) {
+                    let given = params.get("token").and_then(Value::as_str).unwrap_or("");
+                    if same_token(token, given) && failures < MAX_AUTH_FAILURES {
+                        authed = true;
+                        json!({"ok": true, "result": {"scope": "assistant"}})
+                    } else {
+                        failures += 1;
+                        log::warn!("control authentication refused ({failures}/{MAX_AUTH_FAILURES})");
+                        json!({"ok": false, "error": "authentication failed"})
+                    }
+                } else if !authed {
+                    json!({"ok": false, "error": "unauthenticated"})
+                } else if cfg.token.is_some() && !ASSISTANT_ALLOWLIST.contains(&method.as_str()) {
+                    json!({"ok": false, "error": format!("`{method}` is not available to this connection")})
+                } else {
+                    let (req, rrx) = ControlRequest::new(method, params);
+                    if tx.send(req).is_err() {
+                        break;
+                    }
+                    ctx.request_repaint();
+                    rrx.recv_timeout(Duration::from_secs(90)).unwrap_or_else(|_| json!({"ok": false, "error": "timeout"}))
+                };
                 if let Some(o) = r.as_object_mut() {
                     o.insert("id".into(), id);
                 }
@@ -59,42 +162,18 @@ fn serve(stream: TcpStream, tx: Sender<ControlRequest>, ctx: egui::Context) {
             }
             Err(e) => json!({"ok": false, "error": format!("bad JSON: {e}")}),
         };
-        if writeln!(out, "{reply}").is_err() {
+        if writeln!(out, "{reply}").is_err() || failures >= MAX_AUTH_FAILURES {
             break;
         }
     }
 }
 
-/// Tests for the protected control channel (plan task P0-T07; design in
-/// `docs/soundcraft-ai/control-channel-protection.md`).
-///
-/// The protection is built in P1-E03. Until then `start_with` below is a stand-in that ignores the
-/// token, so the `#[ignore]` tests fail when run with `--ignored`, which is what they are for.
-/// When P1-E03 lands, move `ControlConfig` and `start_with` out of this module, delete the
-/// stand-in, and remove the `#[ignore]` attributes.
+/// Tests for the protected control channel (design in `docs/soundcraft-ai/control-channel-protection.md`).
 #[cfg(test)]
 mod protection_tests {
     use super::*;
     use std::sync::{Arc, Mutex};
     use std::time::Instant;
-
-    const PENDING: &str = "P1-E03: control channel protection is not built yet";
-
-    /// The configuration P1-E03 will accept. The stand-in server ignores two of the fields.
-    #[allow(dead_code)]
-    struct ControlConfig {
-        port: u16,
-        /// `Some` puts the server in assistant mode: authentication is required and only the
-        /// assistant allowlist is forwarded. `None` is today's developer mode.
-        token: Option<String>,
-        /// How long a connection may stay silent before it has authenticated.
-        auth_timeout: Duration,
-    }
-
-    /// STAND-IN: today's server, which ignores `token` and `auth_timeout`.
-    fn start_with(cfg: ControlConfig, ctx: egui::Context) -> Receiver<ControlRequest> {
-        start(cfg.port, ctx)
-    }
 
     /// A running server plus a stand-in for the UI thread that records every method it is asked to
     /// run. `seen` is exactly what got past the gate.
@@ -179,9 +258,7 @@ mod protection_tests {
     }
 
     #[test]
-    #[ignore = "P1-E03: control channel protection is not built yet"]
     fn without_a_token_nothing_reaches_the_ui_thread() {
-        let _ = PENDING;
         let h = Harness::launch(Some(TOKEN));
         let mut c = h.client();
         for m in ["session.inspect", "engine.execute", "ui.click", "app.quit"] {
@@ -192,7 +269,6 @@ mod protection_tests {
     }
 
     #[test]
-    #[ignore = "P1-E03: control channel protection is not built yet"]
     fn a_wrong_token_is_refused_and_three_failures_close_the_connection() {
         let h = Harness::launch(Some(TOKEN));
         let mut c = h.client();
@@ -204,7 +280,6 @@ mod protection_tests {
     }
 
     #[test]
-    #[ignore = "P1-E03: control channel protection is not built yet"]
     fn a_token_from_a_previous_launch_is_refused() {
         let old = "a".repeat(64);
         let new = "b".repeat(64);
@@ -217,7 +292,6 @@ mod protection_tests {
     }
 
     #[test]
-    #[ignore = "P1-E03: control channel protection is not built yet"]
     fn the_right_token_unlocks_the_assistant_allowlist_and_nothing_else() {
         let h = Harness::launch(Some(TOKEN));
         let mut c = h.client();
@@ -254,7 +328,6 @@ mod protection_tests {
     /// The body is a line of valid JSON. Today's server answers the HTTP header lines with
     /// "bad JSON" and then runs the body line, so any page the user visits can drive the app.
     #[test]
-    #[ignore = "P1-E03: control channel protection is not built yet"]
     fn an_http_request_carrying_a_json_body_is_not_executed() {
         for token in [Some(TOKEN), None] {
             let h = Harness::launch(token);
@@ -274,7 +347,6 @@ mod protection_tests {
     }
 
     #[test]
-    #[ignore = "P1-E03: control channel protection is not built yet"]
     fn an_oversized_line_closes_the_connection() {
         let h = Harness::launch(Some(TOKEN));
         let mut c = h.client();
@@ -286,7 +358,6 @@ mod protection_tests {
     }
 
     #[test]
-    #[ignore = "P1-E03: control channel protection is not built yet"]
     fn a_silent_unauthenticated_connection_is_closed() {
         let h = Harness::launch(Some(TOKEN));
         let mut c = h.client();
