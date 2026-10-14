@@ -1247,13 +1247,23 @@ fn as_audio_thread(audio: bool, f: impl FnOnce()) {
     f();
 }
 
-/// Process strips, in parallel on native targets when there are enough of them.
+static REALTIME_PARALLEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Let the audio callback hand strips to the shared worker pool. Off by default: the pool has no
+/// deadline, its workers are ordinary threads that other work can occupy, and a callback that waits
+/// on them has no bound on how long a block takes. Offline renders always parallelise.
+pub fn allow_realtime_parallel(on: bool) {
+    REALTIME_PARALLEL.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Process strips, in parallel on native targets when there are enough of them (and, on the audio
+/// thread, only when [`allow_realtime_parallel`] opted in).
 #[cfg(not(target_arch = "wasm32"))]
 fn run_strips<T: Send>(work: &mut [T], f: impl Fn(&mut T) + Sync + Send) {
     use rayon::prelude::*;
-    if work.len() >= 4 {
+    let audio = on_audio_thread();
+    if work.len() >= 4 && (!audio || REALTIME_PARALLEL.load(std::sync::atomic::Ordering::Relaxed)) {
         // The workers render on behalf of this thread: on the audio thread, they are it too.
-        let audio = on_audio_thread();
         work.par_iter_mut().for_each(|w| as_audio_thread(audio, || f(w)));
     } else {
         work.iter_mut().for_each(f);
