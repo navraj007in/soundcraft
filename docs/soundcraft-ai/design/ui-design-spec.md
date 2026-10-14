@@ -1,30 +1,30 @@
 # UI design specification (digest of the Claude Design bundle)
 
-**Version:** 0.1 · **Date:** 14 October 2026 · **Status:** Design received and reviewed; **not yet implemented.**
-**Source:** the Claude Design bundle "Arrange Window Design Round 1" (rounds 1 to 5), made from [ui-design-brief.md](../ui-design-brief.md).
+**Version:** 0.2 · **Date:** 15 October 2026 · **Status:** Rounds 1 to 6 received and reviewed; **not yet implemented.**
+**Source:** the Claude Design bundle "Arrange Window Design Round 1" (rounds 1 to 6; the second download, with `v2` pages that supersede the originals), made from [ui-design-brief.md](../ui-design-brief.md) and [round-6-brief.md](round-6-brief.md).
 **Decisions that override the bundle:** [decisions.md](decisions.md).
-**Machine-readable:** [tokens.json](tokens.json) (colours, type, sizes, palette, redlines) and [copy.json](copy.json) (interaction notes and exact wording). Both are generated from the bundle as data by `tools/design/extract_design.py`; nothing in the bundle is executed.
+**Machine-readable:** [tokens.json](tokens.json) (colours, type, sizes, palette, redlines, hit areas, fader law), [copy.json](copy.json) (interaction notes and exact wording), [icons.json](icons.json) (63 icons as path data) and [messages.json](messages.json) (the 15 messages from board 6b). Both are generated from the bundle as data by `tools/design/extract_design.py`; nothing in the bundle is executed.
 
 ## 1. What this is, and what is not in the repository
 
-The bundle is a set of design-canvas pages (`*.dc.html`) plus a third-party runtime script (`support.js`) that draws them. **Neither the zip nor `support.js` is committed**: the runtime has no licence header, and the pages are an authoring format, not something the app consumes. This document and the two JSON files carry what an implementer needs. To regenerate them, unzip the bundle into a new, empty folder and run `python3 -I tools/design/extract_design.py BUNDLE_DIR docs/soundcraft-ai/design`.
+The bundle is a set of design-canvas pages (`*.dc.html`) plus a third-party runtime script (`support.js`) that draws them. **Neither the zips, `support.js`, the 126 icon SVG files nor the design tool's screenshots are committed**: the runtime has no licence header, the pages are an authoring format, every SVG carries an embedded provenance block (about 8 KB each, not needed), and images in the repo need attribution rows. `icons.json` carries the same path data. This document and the two JSON files carry what an implementer needs. To regenerate them, unzip the bundle into a new, empty folder and run `python3 -I tools/design/extract_design.py BUNDLE_DIR docs/soundcraft-ai/design`.
 
 **Direction chosen:** the dark **"Graphite"** direction (dense, teal accent), with **IBM Plex Sans** for the interface and **IBM Plex Mono** for numbers, plus a full light theme. The alternative from round 1 ("Paper": warm light, vermilion accent, Figtree and JetBrains Mono) was not carried forward.
 
-**What was and was not checked.** I read the bundle's data and markup as text and recomputed every contrast ratio and the clip palette myself (§3); all 104 interaction and copy strings were checked verbatim against the source. **I did not render the boards**, so the visual layout is described from the markup and the board titles, not seen. Fidelity will be checked by rendering the built app with `ui_shot` next to the boards.
+**What was and was not checked.** I read the bundle's data and markup as text and recomputed every contrast ratio and the clip palette (§3); all 112 interaction and copy strings and all 30 message strings were checked verbatim against the source; the 63 icons were rendered and looked at (§4.3); the fader law was compared with the app's real law (§4.2). I looked at two of the design tool's own renders (3c v2 and 6e) but **did not render the other boards**. Fidelity will be checked by rendering the built app with `ui_shot` next to the boards.
 
 ## 2. Boards
 
 | Board | Content | Size |
 |---|---|---|
 | Round 1: 1a, 1b | Two directions for the Arrange window | 1440 × 900 |
-| Arrange Pro, Arrange Pro Light | The chosen direction, dark and light | 1440 × 900 |
-| Design System | Colour, type, sizing, motion, clip palette, component states | n/a |
+| Arrange Pro v2, Arrange Pro Light v2 | The chosen direction, dark and light | 1440 × 900 |
+| Design System v2 | Colour, type, sizing, motion, clip palette, component states | n/a |
 | 3a Vocal inspector | Selected-note practice active | 1440 × 900 |
 | 3b Assistant panel | Suggest, running, unavailable | 360 wide (min 320, max 480) |
-| 3c Change review | Three result kinds | 440 wide (min 400) |
+| 3c Change review (v2) | Three result kinds; a production proposal shows Preview · Reject only | 440 wide (min 400) |
 | 3d Audition | A/B, matching, keep, keep original, discard | 1040 × 640 (min 800 × 520) |
-| 3e Task history | All task states | 1040 wide (panel min 640) |
+| 3e Task history (v2) | All task states, with rejection reasons; "Ready for approval" = audition open | 1040 wide (panel min 640) |
 | 3f Recording health | Status bar 40 px, always visible; warning, error, recovery | n/a |
 | 3g First run, cloud opt-in, missing media | | n/a |
 | 4a Vocalist workspace | One record button, large waveform, pitch view | 1440 × 900 |
@@ -33,8 +33,16 @@ The bundle is a set of design-canvas pages (`*.dc.html`) plus a third-party runt
 | 5a Arrange, light | | 1440 × 900 |
 | 5b Adapting | 1280 × 800 and 2560 × 1440 (scaled schematics) | n/a |
 | 5c Track types | Folder (open), instrument, hidden, aux; header 232 × 74, compact 232 × 40 | n/a |
-| Notes and Copy | Interaction notes and microcopy | n/a |
+| **6a** Change review | Production proposal (Preview · Reject) and explicit assignment (Approve · Reject), dark and light | 440 wide |
+| **6b** Messages | 15 messages, each with a key, text, what the user can do and where it is shown | n/a |
+| **6c** Icon set | 63 icons, drawn natively at 16 px and 20 px, 1× and 2×, both themes | n/a |
+| **6d, 6dm** Component state sheets | Dropdown, slider, context menu, tooltip, dialog, banner, progress, meter, scroll bar, field and more; **6dm is a state matrix** (default, hover, pressed, focus, disabled, n/a with reason) | n/a |
+| **6e** Fader scale and hit areas | The real fader law at three heights; drawn versus clickable sizes | n/a |
+| **6f** Design System additions | New components and tokens (the design lists new components only; no new colour tokens) | n/a |
+| **6x** Conflicts | What in rounds 1 to 5 conflicts with round 6 | n/a |
+| Notes and Copy v2 | Interaction notes and microcopy (UI-1 applied) | n/a |
 
+The original (non-v2) pages were kept in the bundle and flagged as conflicting where they are; use the v2 pages and board 6a.
 Round 3 screens exist in dark and light.
 
 ## 3. Foundations
@@ -169,9 +177,36 @@ Role names (body, header, waveform, border) are inferred from the design's varia
 | **Track header** | 232 × 74 (compact 40 high); a 4 px strip at the left (inferred to be the track-colour bar); 8 px padding; the 74 px stack top to bottom is 6 + 18 + 4 + 20 + 4 + 16 + 6; track buttons 22 × 18 in the header (28 × 22 in the inspector) |
 | **Clip** | height 64 (example width 330); header 14; fade zone 14; fade handle 6 |
 | **Transport** | buttons 40 × 40; play 52 × 40; counter 316 × 48; 20 gap; counter numerals 24 / 28 (bars) and 16 / 20 (time) |
-| **Fader** | states default, at a value, dragging (cap outlined, value tooltip), disabled (track inactive), automated (cap outlined, fill dashed, blue). The board labels "0 dB at 91 px", **but its own value formula gives about −22.5 dB at that position, so the mockup's scale is a placeholder**: use the app's real fader law, not the drawn positions |
+| **Fader** | see §4.2 for the scale. States default, at a value, dragging (cap outlined, value tooltip), disabled (track inactive), automated (cap outlined, fill dashed, blue). Round 4's scale was a placeholder (its "0 dB at 91 px" label disagreed with its own formula); **6e replaces it with the real law** |
 | **Pan** | centre, left, right, dragging (2 px accent ring), disabled, automated |
 | **Automation modes** | Off –, Read ▶, Write ●, Touch ◐, Latch ◉ (each has a glyph and a label, and Latch has a dashed border) |
+
+### 4.1 Hit areas (board 6e; drawn size versus clickable size, logical px)
+
+| Control | Drawn | Hit area | Note |
+|---|---|---|---|
+| Track buttons, header | 22 × 18 | 26 × 24 | Gap 4 between buttons. |
+| Track buttons, inspector | 28 × 22 | 32 × 28 | Gap 4. |
+| Insert power dot | 12 × 12 | 24 × 24 | Within a 24 px slot row. |
+| Insert slot | full × 24 | full × 24 | Rows touch; no extra padding. |
+| Fade handle | 6 × 6 | 16 × 16 | Appears on hover near the clip corner. |
+| Meter clip box | 14 × 8 | 24 × 16 | Click clears the latch. |
+| Pan knob, header | 20 × 20 | 24 × 24 | Drag vertically. |
+| Fader cap, header | 10 × 14 | 18 × 24 | The whole groove row (20 px high) also accepts a click to jump. |
+| Fader cap, inspector | 24 × 36 | 24 × 36 | Already large enough. |
+| Disclosure arrow | 10 × 10 | 24 × 24 | The whole panel header row is also clickable. |
+
+Minimum gap between neighbours 4 px; the focus ring is 2 px at a 1 px offset so it stays inside the gap.
+
+### 4.2 The fader law (checked)
+
+The design's 13 points match the app's real law (`soundcraft_model::fader_db_to_pos`) to within 0.0005, so the scale in 6e can be trusted: 0 dB at 75% of the travel, +6 at 87.5%, +12 at the top, −24 at 25%, then compressing toward −∞. **The app must use the model function, not a copy of these points.** Labels by height: 120 px travel shows +12, 0, −12, −24, −∞; 190 px shows +12, +6, 0, −6, −12, −24, −48, −∞; 260 px shows ten marks (the drawn list omits −48, although its caption says "all marks from +12 to −60"; the tightest gap is 14 px). Unity (0 dB) is the one mark with an accent tick and a bold label.
+
+### 4.3 Icons (board 6c; data in [icons.json](icons.json))
+
+**63 icons** in 7 groups (transport 8, tool 7, mode 4, view 5, track 17, product 11, status 11), every item the brief asked for, each drawn at **20 px** (grid 20, padding 2) and **16 px** (grid 16, padding 2). **Stroke: 1 px at both sizes, round caps and joins**, and the group is offset by half a pixel so a 1 px line is crisp at 1× and 2×; the design chose this because egui draws 1 px strokes. The 16 px set is genuinely redrawn, not scaled (61 of 63 differ from the 20 px geometry by more than scaling, the other two being a square and an X; 98% of 16 px coordinates are on whole pixels; the design notes where 16 px drops detail, such as the grid going from 4 × 4 to 2 × 2). **A path renderer needs only `M L H V A C S Z`** (absolute and relative; arcs are circular). Four icons also have a **filled** path (record, record-arm, automation-write, overflow), which the renderer must draw as filled circles.
+
+The design's own originality notes: the automation glyphs (a wave with a triangle, dot, ring or barred ring) are "not a standard"; the selector (a cornered marquee) and the magnifier family are near-universal conventions; it lists every generic shape it used (transport, padlock, eye with a slash, curved undo and redo, warning triangle, information, error, success, speech bubble, sliders, power symbol, headphones and so on). Whether that is acceptable is the project owner's call.
 
 ## 5. Screens and the plan tasks they feed
 
@@ -183,13 +218,14 @@ Role names (body, header, waveform, border) are inferred from the design's varia
 | 3d Audition | P1-I04 |
 | 3e Task history | P1-I05 |
 | Keyboard, contrast, no colour-only meaning (all boards) | P1-I06 |
-| Design system theme and fonts; Arrange window restyle (Arrange Pro, 4b, 4c, 5a to 5c) | P1-I07, P1-I08 (proposed) |
+| Design system theme and fonts; Arrange window restyle (Arrange Pro v2, 4b, 4c, 5a to 5c) | P1-I07, P1-I08 (proposed) |
+| Icon set in code (6c, `icons.json`) | P1-I09 (proposed) |
 | 3f Recording health (live status and disk-full dialog) | P3-R03 |
 | 3g Cloud opt-in, first run, missing media | P1-M03, P1-M04 (opt-in, budget), P3-P01 |
 
 ## 6. Interaction notes
 
-**The Change review row below is overridden by decision UI-1 in [decisions.md](decisions.md)** (a production proposal has Preview and Reject only; Approve is for explicit assignments). The rest is as designed.
+From Notes and Copy v2, which already applies decision UI-1 (the change review has separate rows for a production proposal and an explicit assignment).
 
 | Component | Click, hover, keyboard | Disabled or unavailable |
 |---|---|---|
@@ -208,37 +244,57 @@ Role names (body, header, waveform, border) are inferred from the design's varia
 | Vocal inspector | Drag on the waveform to select a range. Handles move one edge. The readout shows start, end and length. Choose a target note and “Use current selection” to set a practice region. | With no range it shows “Select a range on the lead vocal to see its pitch.” Practice results appear only for a chosen region. |
 | Nearest-degree tag | Hover shows “Nearest note to the measured pitch. This is not a grade.” Tags are not clickable. | Hidden where confidence is low. |
 | Assistant | Enter sends. Shift-Enter adds a line. Evidence links move the playhead and highlight the range they refer to. Cancel stops work and changes nothing. | When the cloud assistant is off the request box is off and says why. Goal chips still work. |
-| Change review | Editing any value turns the preview stale and enables Render. Approve is off while the preview is out of date. Reject needs no confirmation. | Approve is off with the message “Render the preview first” when the preview is stale. |
-| Audition | Space switches A and B. The order is random for each audition. Loudness matching affects listening only. Keep this change, Keep the original and Discard have equal size and weight. | When the session changes, Keep this change turns off and the strip says why. The other two stay on. |
+| Change review · production proposal | Preview is the primary action and Reject sits beside it. There is no Approve. Preview renders the candidate and opens the audition, where Keep this change is the single approval. Editing any value turns the preview stale. | Preview is off with the reason “A plug-in in the signal path cannot be rendered here.” when the plan cannot be rendered. |
+| Change review · explicit assignment | Approve is primary and Reject sits beside it. There is no preview and no audition. Editing any value turns approval off. | Approve is off when the session changed: “The session changed. Ask again to review this change.” |
+| Audition | Focus starts on the A/B switch. Space switches A and B. The order is random for each audition. Loudness matching affects listening only. Keep this change, Keep the original and Discard have equal size and weight. | When the session changes, Keep this change turns off and the strip says why. The other two stay on. |
 | Task history | Click a row to open its receipt. Undo is available only for Applied tasks. Recovery required offers three actions with the evidence beside them. | Undo reads “Not needed” or “Not available” instead of a blank. |
 | Recording health | The status bar is always visible while recording. Details opens the take list. The disk-full dialog takes focus and needs a click to close. | Not applicable. |
 
 ## 7. Microcopy
 
-The exact wording is in [copy.json](copy.json), in seven groups:
+The exact wording is in [copy.json](copy.json) (seven groups, 72 strings) and, for the policy results, in [messages.json](messages.json) (15 messages):
 
 - **5.4 Assistant panel**: 10 strings
-- **5.5 Change review**: 10 strings
+- **5.5 Change review**: 13 strings
 - **5.6 Audition**: 7 strings
-- **5.7 Task history**: 12 strings
+- **5.7 Task history**: 15 strings
 - **5.8 Recording health**: 7 strings
 - **5.9 Vocal Check and cloud**: 12 strings
 - **Missing media and empty states**: 8 strings
 
 Numbers in the strings (levels, times, loudness differences, the rule version) are **samples**: fill them from real values at build time.
 
-## 8. Gaps against the brief
+## 8. What the round 6 bundle resolved
 
-- **No icon set** (brief §6: about 40 icons at 20 and 16 px as SVG). The boards use a few inline glyphs and Unicode symbols only.
-- **Component state sheets are incomplete.** The design system sheet covers button, toggle, transport, track buttons, text field, tabs, insert slot and counter. Dropdown, slider, context menu, tooltip, dialog, toast, banner, progress, collapsible section and meter detail appear only inside screens, if at all.
-- The "Paper" direction was dropped, which was the intent of round 1, so nothing is missing there.
+- **Icon set:** 63 icons at both sizes, as specified (§4.3).
+- **Component states:** the 6d sheets name dropdown, slider, context menu, tooltip, dialog (including the disk-full dialog), banner and toast, progress, collapsible section, panel header, meter, scroll bar and text field, and 6dm is a state matrix (default, hover, pressed, focus, disabled, with "n/a" and the reason where a state does not apply). **The matrix's completeness is the board's claim; I did not check it cell by cell.**
+- **Approval flow:** the v2 pages apply decision UI-1 (3c, 3e, the notes and the copy).
+- **Fader scale:** redrawn to the real law (§4.2). **Hit areas:** drawn versus clickable sizes for ten dense controls (§4.1).
+- **Messages:** all 11 situations from the round 6 brief plus the three UI-1 strings, 15 messages in all, each saying whether anything changed.
 
-## 9. Issues to settle before building
+## 9. Open issues found in review
 
-1. **Two approvals for one change: decided.** The design had Preview, Approve and Reject in the change review and then "Keep this change" in the audition. PRD v0.3 section 5.2 makes **Keep in the audition the approval for production proposals** and allows approval from the change list only for simple supported edits. Decision UI-1 in [decisions.md](decisions.md): production proposals have **Preview and Reject only**, explicit assignments have **Approve and Reject**, and the controller sets the path. Where this differs from the bundle's strings, decisions.md wins.
-2. **Placeholder rule version.** The copy says "version 1.2"; the headroom rule is `level.headroom` 0.1.0. The string must be filled from the rule at build time.
-3. **The microcopy has no wording for the policy's other results** (stale analysis, role not confirmed, automation conflict, too little signal, near-silence, fader limits). The policy returns a code for each ([production-policy.md](../production-policy.md)); each needs a plain-language message in the same style. Ask the design tool for them or write them to the same rules.
-4. **Dense hit targets.** The dense sizes (22 × 18 track buttons) are smaller than egui's default hit targets; they need explicit sizing and a check that they remain operable.
+**Icons** (see the contact sheets described in §4.3):
+1. **`zoom` and `zoom-out` are near-duplicates at 20 px** (a 4-unit bar against a 6-unit bar inside the lens). The 16 px zoom drops the bar and is a plain magnifier. Give the zoom tool a clearly different glyph.
+2. **`smart-tool` is a four-pointed sparkle**, which has become the common symbol for "AI" in products. In an AI-assisted DAW it will read as the assistant, and it contradicts the brief's rule against "smart" and "magic" connotations. Replace it.
+3. **`stale` reads as a sigma (Σ)**, a poor picture of "out of date". Use a clock, an hourglass or a circular arrow with a dot.
+4. **1 px strokes at 20 px are light** (the design chose them for crispness at 1× and 2×). Check legibility in the built app before accepting them.
+5. **Latch versus touch at 16 px** differ only by a small bar through a ring; check they are tellable apart at 1×.
+
+**Messages:**
+6. **`preview_unavailable_plugin`** advises "Bypass the plug-in to hear the change". Bypassing changes the session, which makes the proposal stale, so the user would have to ask again; the message should say so.
+7. **`goal_unsupported`** offers Headroom, Vocal clarity and Even level, but only Headroom is admitted in Phase 1. Build the list from the goals actually available.
+8. **`proposal_failed`** has three sentences (the rule was two). Minor.
+
+**Boards:**
+9. **3d Audition: the initial focus ring on the A/B switch is not drawn** (the design's own conflict list says so).
+10. **6e caption versus drawn labels** for the tallest fader (§4.2): minor.
+11. **The design's own list (board 6x) of conflicts with older boards** is kept in `tokens.json` under `design_listed_conflicts_with_older_boards`. The v2 pages fix 3c, 3e and the notes and copy; **the Round 4 and Round 2 header fader, the sizes table (which should state drawn and hit sizes) and the icon list were not all updated**, so use 6e, §4.1 and 6c.
+
+**Build and licence:**
+12. The SVG exports embed a **C2PA content-credentials block** (about 8 KB each). `icons.json` drops it.
+13. **Dots and discs** (overflow, record, record-arm, automation-write) are filled paths, not strokes; the renderer must fill them.
+14. **Dense hit targets** are now specified (§4.1); the app's controls must implement the hit area, not just the drawn size.
 
 ## 10. Implementation notes for egui
 
@@ -246,10 +302,11 @@ Straightforward: filled and rounded rectangles, 1 px borders, vertical gradients
 
 ## 11. Provenance and licence
 
-The pages were generated by Claude Design from the brief. They contain no `<img>` tags and no embedded image data: everything is inline SVG and CSS. The only external references are Google Fonts stylesheets (used when the pages are viewed, not by the app). The fonts are named OFL families (§3.3). The bundled runtime script was not used and is not redistributed.
+The pages were generated by Claude Design from the briefs. They contain no `<img>` tags and no embedded image data: everything is inline SVG and CSS. The only external references are Google Fonts stylesheets (used when the pages are viewed, not by the app). The fonts are named OFL families (§3.3). The bundled runtime script was not used and is not redistributed.
 
 ## Revision history
 
 | Version | Date | Change |
 |---|---|---|
 | 0.1 | 14 October 2026 | Digest of the received bundle, with extracted tokens and copy. |
+| 0.2 | 15 October 2026 | Round 6 imported (v2 pages, icons, messages, state sheets, fader law, hit areas); icons and fader checked; open issues rewritten. |

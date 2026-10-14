@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Extract the design data from the Claude Design bundle as PLAIN DATA (no page code is run).
 
-Reads the JavaScript array literals in the bundle's pages, turns them into Python literals with
+Prefers the "<page> v2" version of a page when the bundle has one. Reads the JavaScript array literals in the bundle's pages, turns them into Python literals with
 ast.literal_eval (which cannot execute code), recomputes contrast ratios and the clip palette with
 the same published formulas (WCAG relative luminance; OKLCH to sRGB), and writes tokens.json and
 copy.json. Usage: extract_design.py BUNDLE_DIR OUT_DIR
@@ -55,8 +55,16 @@ def lit(src):
                 out.append(c); i += 1
     return ast.literal_eval(''.join(out))
 
-ds = open(f'{bundle}/Design System.dc.html', encoding='utf-8').read()
-nc = open(f'{bundle}/Notes and Copy.dc.html', encoding='utf-8').read()
+import os
+def page(name):
+    """The v2 page when the bundle has one, else the original."""
+    v2 = f'{bundle}/{name} v2.dc.html'
+    return open(v2 if os.path.exists(v2) else f'{bundle}/{name}.dc.html', encoding='utf-8').read()
+def script(text):
+    i = text.find('data-dc-script'); return text[i:text.find('</script>', i)]
+
+ds = page('Design System')
+nc = page('Notes and Copy')
 
 # ---- contrast and colour maths (WCAG 2.x luminance; OKLCH -> sRGB) ----
 def rgb(h): return [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
@@ -151,5 +159,50 @@ copy_src = re.sub(r'([{,]\s*)(t|rows)\s*:', r"\1'\2':", copy_src)
 copy = [{'section': g['t'], 'strings': [{'key': k, 'text': v} for k, v in g['rows']]} for g in lit(copy_src)]
 json.dump({'note': 'Exact wording from the design (Notes and Copy). Words the design avoids: AI-powered, smart, magic, scores as percentages, wrong, correct, better. Strings with numbers are samples; fill them from real values at build time.', 'interaction_notes': notes, 'microcopy': copy}, open(f'{out}/copy.json', 'w', encoding='utf-8'), indent=1, ensure_ascii=False)
 
+
+# ---- Round 6: icons, messages, hit areas, fader law, notes ----
+r6 = f'{bundle}/Round 6 Review Messages Fader.dc.html'
+r6i = f'{bundle}/Round 6 Icons States System.dc.html'
+out_extra = []
+if os.path.exists(r6) and os.path.exists(r6i) and os.path.exists(f'{bundle}/icons-data.js'):
+    b6, b6i = script(open(r6, encoding='utf-8').read()), script(open(r6i, encoding='utf-8').read())
+
+    # icons: columns are name, group, stroke path 20, filled path 20, stroke path 16, filled path 16, note
+    isrc = open(f'{bundle}/icons-data.js', encoding='utf-8').read()
+    rows = ast.literal_eval(isrc[isrc.index('['):isrc.rindex(']') + 1])
+    imit_src = re.sub(r"([{,]\s*)(n|i|c)\s*:", r"\1'\2':", block(b6i, 'imit'))
+    conv = re.search(r"const conv\s*=\s*'(.*?)';", b6i, re.S).group(1)
+    icons_json = {
+        'source': 'icons-data.js and the Round 6 icon board of the Claude Design bundle, extracted as data',
+        'spec': {'grid_20': '20 x 20, padding 2 (live 16 x 16)', 'grid_16': '16 x 16, padding 2 (live 12 x 12)', 'stroke_px': 1, 'caps_and_joins': 'round',
+                 'group_transform': 'translate(0.5 0.5) so a 1 px stroke lands on pixel centres', 'path_commands_needed': 'M L H V A C S Z, absolute and relative (arcs are circular)',
+                 'stroke_path_and_filled_path': 'Each size has a stroke path (drawn with the stroke, no fill) and an optional filled path (drawn filled, as in record, record-arm, automation-write, overflow). Both are present in every state. The exported SVG files also embed a C2PA provenance block in <metadata>; it is not needed and is dropped here.'},
+        'icons': [{'name': r[0], 'group': r[1], 'size_20': {'stroke': r[2], 'fill': r[3]}, 'size_16': {'stroke': r[4], 'fill': r[5]}, 'note': r[6]} for r in rows],
+        'imitation_notes': [{'icons': x['n'], 'idea': x['i'], 'convention': x['c']} for x in lit(imit_src)],
+        'conventional_shapes': conv,
+    }
+    json.dump(icons_json, open(f'{out}/icons.json', 'w', encoding='utf-8'), indent=1, ensure_ascii=False)
+
+    # messages
+    a_val = re.search(r"const A = '([^']*)'", b6).group(1)
+    msrc = re.sub(r'\bM\(', '(', block(b6, 'msgs')).replace(', A)', f", '{a_val}')")
+    msgs = [{'key': k, 'text': t, 'what_you_can_do': w, 'shown_in': [x.strip() for x in where.split(',')]} for k, t, w, where in lit(msrc)]
+    json.dump({'note': 'Messages for the policy results and the UI-1 strings, from board 6b. Numbers are samples; fill them from real values. Offer only the goals that are available at build time.', 'messages': msgs}, open(f'{out}/messages.json', 'w', encoding='utf-8'), indent=1, ensure_ascii=False)
+
+    # hit areas, the fader law, new components and the design's own list of conflicts with older boards
+    hits = [{'control': a, 'drawn': b, 'hit_area': c, 'note': d} for a, b, c, d in lit(re.sub(r'\bH\(', '(', block(b6, 'hits')))]
+    pts = lit(block(b6, 'pts').replace('-Infinity', '-1e9'))
+    law = [{'db': None if d < -1e8 else d, 'fraction_of_travel': f} for d, f in pts]
+    conflicts = [{'board': w, 'issue': t} for w, t in lit(re.sub(r'\bC\(', '(', block(b6, 'conflicts')))]
+    newc = lit(re.sub(r"([{,]\s*)(n|t)\s*:", r"\1'\2':", block(b6i, 'newc')))
+    tj = json.load(open(f'{out}/tokens.json', encoding='utf-8'))
+    tj['hit_areas'] = hits
+    tj['fader_law'] = {'range_db': [None, 12], 'points': law, 'note': 'Matches soundcraft_model::fader_db_to_pos (checked at all 13 points, largest difference 0.0005). Use the model function, not these points.'}
+    tj['new_components_round_6'] = [{'name': x['n'], 'what': x['t']} for x in newc]
+    tj['design_listed_conflicts_with_older_boards'] = conflicts
+    json.dump(tj, open(f'{out}/tokens.json', 'w', encoding='utf-8'), indent=1, ensure_ascii=False)
+    out_extra = [f'icons {len(rows)}', f'messages {len(msgs)}', f'hit areas {len(hits)}', f'law points {len(law)}', f'conflicts {len(conflicts)}']
+
 print(f"dark {len(dark)} light {len(light)} type {len(type_scale)} sizing {len(sizing)} palette {len(palette)} notes {len(notes)} copy groups {len(copy)} strings {sum(len(g['strings']) for g in copy)}")
+print('round 6:', ', '.join(out_extra) if out_extra else 'not in this bundle')
 print("contrast problems:", problems if problems else "none")

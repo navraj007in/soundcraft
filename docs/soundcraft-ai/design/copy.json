@@ -77,13 +77,18 @@
    "disabled_or_unavailable": "When the cloud assistant is off the request box is off and says why. Goal chips still work."
   },
   {
-   "component": "Change review",
-   "click_hover_keyboard": "Editing any value turns the preview stale and enables Render. Approve is off while the preview is out of date. Reject needs no confirmation.",
-   "disabled_or_unavailable": "Approve is off with the message “Render the preview first” when the preview is stale."
+   "component": "Change review · production proposal",
+   "click_hover_keyboard": "Preview is the primary action and Reject sits beside it. There is no Approve. Preview renders the candidate and opens the audition, where Keep this change is the single approval. Editing any value turns the preview stale.",
+   "disabled_or_unavailable": "Preview is off with the reason “A plug-in in the signal path cannot be rendered here.” when the plan cannot be rendered."
+  },
+  {
+   "component": "Change review · explicit assignment",
+   "click_hover_keyboard": "Approve is primary and Reject sits beside it. There is no preview and no audition. Editing any value turns approval off.",
+   "disabled_or_unavailable": "Approve is off when the session changed: “The session changed. Ask again to review this change.”"
   },
   {
    "component": "Audition",
-   "click_hover_keyboard": "Space switches A and B. The order is random for each audition. Loudness matching affects listening only. Keep this change, Keep the original and Discard have equal size and weight.",
+   "click_hover_keyboard": "Focus starts on the A/B switch. Space switches A and B. The order is random for each audition. Loudness matching affects listening only. Keep this change, Keep the original and Discard have equal size and weight.",
    "disabled_or_unavailable": "When the session changes, Keep this change turns off and the strip says why. The other two stay on."
   },
   {
@@ -171,8 +176,20 @@
      "text": "Limited to 12 dB per change."
     },
     {
-     "key": "Actions",
-     "text": "Preview · Approve · Reject"
+     "key": "Actions, production proposal",
+     "text": "Preview · Reject"
+    },
+    {
+     "key": "Actions, explicit assignment",
+     "text": "Approve · Reject"
+    },
+    {
+     "key": "Preview off",
+     "text": "A plug-in in the signal path cannot be rendered here."
+    },
+    {
+     "key": "Assignment stale",
+     "text": "The session changed. Ask again to review this change."
     },
     {
      "key": "No change",
@@ -238,7 +255,7 @@
     },
     {
      "key": "Ready for approval",
-     "text": "Waiting for you."
+     "text": "The audition is open. Choose Keep this change, Keep the original or Discard."
     },
     {
      "key": "Approved",
@@ -253,8 +270,20 @@
      "text": "Applied: 1 change. Undo."
     },
     {
+     "key": "Rejected before preview",
+     "text": "You rejected this proposal without previewing it. Nothing changed."
+    },
+    {
+     "key": "Kept the original",
+     "text": "You kept the original. Nothing changed."
+    },
+    {
+     "key": "Discarded",
+     "text": "You discarded the change after listening. Nothing changed."
+    },
+    {
      "key": "Rejected",
-     "text": "You rejected this proposal. Nothing changed."
+     "text": "You rejected this change. Nothing changed."
     },
     {
      "key": "Cancelled",

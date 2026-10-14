@@ -1,7 +1,7 @@
 # SoundCraft-AI execution plan
 
 **Implements:** [SoundCraft-AI Product Requirements v0.3](../../SoundCraft_AI_PRD_v0.3.docx) (14 October 2026)
-**Plan version:** 0.14 · **Updated:** 14 October 2026 · **Status:** Draft. Phase 0 has not started.
+**Plan version:** 0.15 · **Updated:** 14 October 2026 · **Status:** Draft. Phase 0 has not started.
 **Baseline:** fork `navraj007in/soundcraft`, `main` at `6cf896e` (the PRD's pinned 0.6.1 rebuild).
 
 This plan breaks the PRD into phases, work packages and tasks, and ties each one to the
@@ -227,8 +227,9 @@ the smallest admitted operation set. Section 7 protections apply from the first 
 | P1-I04 | Audition view | A/B, solo and in-context listening, visible loudness matching, Keep and Discard. Design: board 3d. **Keep this change is the approval action for production proposals** (it binds the candidate); Keep the original, Discard and Keep this change stay equal in size and weight, and initial focus is the A/B switch (UI-1). |
 | P1-I05 | Task history | Request, state, applied changes, outcome, undo availability, recovery instructions. Undo right after a task reverts the whole task; later manual edits are never undone silently (PRD §7.4). Design: board 3e. |
 | P1-I06 | Accessibility | Keyboard operation, readable contrast, no meaning carried by colour alone. Check by rendering with `ui_shot`. The design's contrast values were recomputed and pass its own minimums. |
-| P1-I07 | Design-system theme *(proposed)* | Implement the received design tokens in `crates/ui-egui`: dark and light colour tokens, type scale, sizes, radii, the offset shadow, motion timings and the reduced-motion rule, from [tokens.json](design/tokens.json). Bundle IBM Plex Sans (400, 500, 600) and Mono (400, 500) with their licence texts and `ATTRIBUTION.md` rows. A live dark and light switch. |
+| P1-I07 | Design-system theme *(proposed)* | Implement the received design tokens in `crates/ui-egui`: dark and light colour tokens, type scale, sizes, radii, the offset shadow, motion timings and the reduced-motion rule, from [tokens.json](design/tokens.json), including the hit areas for the dense controls. Bundle IBM Plex Sans (400, 500, 600) and Mono (400, 500) with their licence texts and `ATTRIBUTION.md` rows. A live dark and light switch. |
 | P1-I08 | Arrange window restyle *(proposed)* | Restyle the track header (232 × 74, compact 40), clip, toolbar and transport to the redlines in [ui-design-spec.md](design/ui-design-spec.md) §4, with a collapsible ruler and the inspector pane; check each against the boards with side-by-side `ui_shot` renders. Needs the app's real fader law (the mockup's scale is a placeholder). Whether this lands in Phase 1 is a product decision, since the plan holds Phase 1 until the G00 result. |
+| P1-I09 | Icon set in code *(proposed)* | Draw the 63 icons from [icons.json](design/icons.json) at 20 px and 16 px: a small path renderer for `M L H V A C S Z` (absolute and relative; circular arcs), 1 px round strokes with the half-pixel offset, and filled shapes for record, record-arm, automation-write and overflow. Resolve first the open icon issues in [ui-design-spec.md](design/ui-design-spec.md) §9 (zoom versus zoom-out, the sparkle smart tool, the stale icon). Every icon is original and drawn in code, as the repo rule requires; the design tool's imitation notes are in `icons.json` for the owner's review. | FR-13 |
 
 ### 5.6 Phase 1 tests and exit
 
@@ -338,7 +339,7 @@ versioned scope change is approved.
 | FR-11 Recording and project integrity | P0-T03, P0-T04, P1-E07, P1-C05, P1-C08, P3-R01 – P3-R05 |
 | FR-12 Candidate comparison and export | P1-C04, P1-U02 – P1-U06, P1-I04, P2-X01 |
 | FR-13 Job and capability management | P1-E03, P1-C06, P1-M03, P1-M04, P3-F01, P3-P01 |
-| PRD §5.3 Required surfaces | P1-I01 – P1-I06 (design received; P1-I07 and P1-I08 proposed) |
+| PRD §5.3 Required surfaces | P1-I01 – P1-I06 (design received; P1-I07 to P1-I09 proposed) |
 | FR-05 to FR-09 | Deferred (PRD §6.9). No tasks in this plan. |
 
 ---
@@ -392,3 +393,4 @@ versioned scope change is approved.
 | 0.12 | 14 October 2026 | P0-T08: the probabilistic (pYIN-style) F0 tracker is built in `soundcraft-dsp` with a voicing score and a pitch score, verified against an exact posterior on a tiny model; two defects found by failing tests were fixed. It beats YIN on synthetic noisy tones and phrases; neither works at 0 dB SNR. Natural-recording accuracy remains unmeasured. |
 | 0.13 | 14 October 2026 | UI design received (Claude Design bundle, rounds 1 to 5) and digested into `design/ui-design-spec.md`, `design/tokens.json` and `design/copy.json`; P1-I01 to P1-I05 now name their boards; P1-I07 (theme) and P1-I08 (Arrange restyle) proposed; the Approve versus Keep conflict is recorded under P1-I03. |
 | 0.14 | 14 October 2026 | UI-1 approval flow decided (`design/decisions.md`): a production proposal is approved by Keep in the audition and has no Approve in the change review; an explicit assignment is approved in the change list; the controller sets `approval_path`. P1-C01, P1-C04, P1-I03 to P1-I05 updated with acceptance tests. |
+| 0.15 | 15 October 2026 | Round 6 design imported and reviewed: 63 icons (16 px genuinely redrawn), 15 messages, the real fader law confirmed, hit areas, state sheets; extractor extended (`icons.json`, `messages.json`); P1-I09 (icons in code) proposed; open issues listed in `design/ui-design-spec.md` §9. |

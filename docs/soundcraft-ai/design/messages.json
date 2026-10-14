@@ -1,0 +1,131 @@
+{
+ "note": "Messages for the policy results and the UI-1 strings, from board 6b. Numbers are samples; fill them from real values. Offer only the goals that are available at build time.",
+ "messages": [
+  {
+   "key": "stale_measurements",
+   "text": "The vocal was measured before the session changed, so this proposal may no longer fit. Nothing was changed.",
+   "what_you_can_do": "Run the vocal check again.",
+   "shown_in": [
+    "assistant_response",
+    "change_review_banner"
+   ]
+  },
+  {
+   "key": "lead_vocal_not_confirmed",
+   "text": "This track is not confirmed as the lead vocal. Nothing was changed.",
+   "what_you_can_do": "Confirm which track is the lead vocal.",
+   "shown_in": [
+    "assistant_response",
+    "change_review_banner"
+   ]
+  },
+  {
+   "key": "fader_automated",
+   "text": "This track’s level follows an automation curve, so a fixed change would be overridden. Nothing was changed.",
+   "what_you_can_do": "Set the track’s automation mode to Off, or lower the level by hand.",
+   "shown_in": [
+    "assistant_response",
+    "change_review_banner"
+   ]
+  },
+  {
+   "key": "too_little_signal",
+   "text": "The selected range has less than 1 second of sound, which is too short to set a level. Nothing was changed.",
+   "what_you_can_do": "Select a longer part that includes the singing.",
+   "shown_in": [
+    "assistant_response"
+   ]
+  },
+  {
+   "key": "almost_silent",
+   "text": "The loudest point in this range is −72 dBTP, which is almost silent. Nothing was changed.",
+   "what_you_can_do": "Select where the vocal is singing, or check the track’s input.",
+   "shown_in": [
+    "assistant_response"
+   ]
+  },
+  {
+   "key": "clipped_lowering_note",
+   "text": "The source is clipped. Lowering the level gives headroom but does not repair the clipping.",
+   "what_you_can_do": "Nothing needed. This is for your information.",
+   "shown_in": [
+    "change_review_banner"
+   ]
+  },
+  {
+   "key": "fader_at_limit",
+   "text": "The fader is at its upper limit of +6 dB, and this goal would need a higher level. Nothing was changed.",
+   "what_you_can_do": "Lower the level by hand, or choose another track.",
+   "shown_in": [
+    "assistant_response",
+    "change_review_banner"
+   ]
+  },
+  {
+   "key": "fader_out_of_range",
+   "text": "The fader is at −100 dB, below the usable range, so a change cannot be made safely. Nothing was changed.",
+   "what_you_can_do": "Move the fader into range first.",
+   "shown_in": [
+    "assistant_response",
+    "change_review_banner"
+   ]
+  },
+  {
+   "key": "limit_change_size",
+   "text": "Limited to 12 dB per change.",
+   "what_you_can_do": "Nothing needed.",
+   "shown_in": [
+    "change_review_limits"
+   ]
+  },
+  {
+   "key": "limit_fader_range",
+   "text": "The fader is kept within −60 to +6 dB.",
+   "what_you_can_do": "Nothing needed.",
+   "shown_in": [
+    "change_review_limits"
+   ]
+  },
+  {
+   "key": "goal_unsupported",
+   "text": "That goal is not supported yet. Nothing was changed.",
+   "what_you_can_do": "Choose Headroom, Vocal clarity or Even level.",
+   "shown_in": [
+    "assistant_response"
+   ]
+  },
+  {
+   "key": "proposal_failed",
+   "text": "Something went wrong while preparing this proposal. It was not caused by anything you did. Nothing was changed.",
+   "what_you_can_do": "Try again. If it keeps happening, give support the code under Details.",
+   "shown_in": [
+    "assistant_response",
+    "change_review_banner"
+   ]
+  },
+  {
+   "key": "preview_unavailable_plugin",
+   "text": "A plug-in in the signal path cannot be rendered here.",
+   "what_you_can_do": "Preview is off. Bypass the plug-in to hear the change.",
+   "shown_in": [
+    "change_review_banner"
+   ]
+  },
+  {
+   "key": "assignment_stale",
+   "text": "The session changed. Ask again to review this change.",
+   "what_you_can_do": "Ask again.",
+   "shown_in": [
+    "change_review_banner"
+   ]
+  },
+  {
+   "key": "history_kept_original",
+   "text": "You kept the original. Nothing changed.",
+   "what_you_can_do": "None needed.",
+   "shown_in": [
+    "task_history"
+   ]
+  }
+ ]
+}
