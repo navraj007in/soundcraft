@@ -1,0 +1,401 @@
+{
+ "note": "Exact wording from the design (Notes and Copy). Words the design avoids: AI-powered, smart, magic, scores as percentages, wrong, correct, better. Strings with numbers are samples; fill them from real values at build time.",
+ "interaction_notes": [
+  {
+   "component": "Button",
+   "click_hover_keyboard": "Hover raises the gradient 8%. Press inverts it for 40 ms. Enter or Space activates. Focus shows a 2 px accent ring.",
+   "disabled_or_unavailable": "Dimmed to 70%. Hover shows a tooltip that says why, for example “Select a range first”."
+  },
+  {
+   "component": "Toggle",
+   "click_hover_keyboard": "Click flips on and off. The on state adds a check and a fill, so it is not colour only. Mixed shows a dash.",
+   "disabled_or_unavailable": "Same as button."
+  },
+  {
+   "component": "Transport",
+   "click_hover_keyboard": "Space plays and stops. Return goes to start. Clicking record while armed starts recording and the button turns solid red with the word “Recording”.",
+   "disabled_or_unavailable": "Record is off with “Choose an input first” when no track is armed."
+  },
+  {
+   "component": "Track buttons",
+   "click_hover_keyboard": "R arms, I monitors, M mutes, S solos. Option-click on S sets solo-safe (outline). Another solo shows other tracks as dashed “implicitly muted”.",
+   "disabled_or_unavailable": "On an inactive track all four are off and say “Track is inactive”."
+  },
+  {
+   "component": "Fader",
+   "click_hover_keyboard": "Drag to change. Shift-drag is fine adjust. Double-click resets to 0 dB. While dragging a tooltip shows the value. Arrow keys move 0.1 dB, Shift 1 dB.",
+   "disabled_or_unavailable": "When automation is in Read the cap is outlined and moves by itself. Dragging then asks to switch to Touch."
+  },
+  {
+   "component": "Pan",
+   "click_hover_keyboard": "Drag up or down. Double-click centres. Arrow keys move one step.",
+   "disabled_or_unavailable": "Same as fader."
+  },
+  {
+   "component": "Meter",
+   "click_hover_keyboard": "Click the clip box to clear the latched clip. Hover shows peak and RMS in dB.",
+   "disabled_or_unavailable": "A track that is off shows an empty well with no fill."
+  },
+  {
+   "component": "Clip",
+   "click_hover_keyboard": "Click selects with a 2 px outline. Drag moves. Drag an edge to trim. Hover near the top corners shows fade handles. Double-click opens the clip in the editor.",
+   "disabled_or_unavailable": "Locked clips show a dashed outline and refuse drag with the message “Clip is locked”. Missing media shows “Relink…”."
+  },
+  {
+   "component": "Counter",
+   "click_hover_keyboard": "Click to edit. Enter confirms. Escape cancels. Tab switches between Bars|Beats and Min:Secs.",
+   "disabled_or_unavailable": "Read-only while recording."
+  },
+  {
+   "component": "Ruler",
+   "click_hover_keyboard": "Click sets the playhead. Drag selects a range. The Ruler button in the corner collapses it to one row.",
+   "disabled_or_unavailable": "None."
+  },
+  {
+   "component": "Track header",
+   "click_hover_keyboard": "Click selects and shows it in the inspector. Double-click the name to rename. Drag the bottom edge to change the height.",
+   "disabled_or_unavailable": "Inactive: dimmed, labelled “Inactive”, controls off."
+  },
+  {
+   "component": "Insert slot",
+   "click_hover_keyboard": "Click the power dot to bypass. Click the name to open. Drag to reorder. Empty slots open a plug-in list.",
+   "disabled_or_unavailable": "Bypassed shows a struck-through name and the word “Bypassed”."
+  },
+  {
+   "component": "Vocal inspector",
+   "click_hover_keyboard": "Drag on the waveform to select a range. Handles move one edge. The readout shows start, end and length. Choose a target note and “Use current selection” to set a practice region.",
+   "disabled_or_unavailable": "With no range it shows “Select a range on the lead vocal to see its pitch.” Practice results appear only for a chosen region."
+  },
+  {
+   "component": "Nearest-degree tag",
+   "click_hover_keyboard": "Hover shows “Nearest note to the measured pitch. This is not a grade.” Tags are not clickable.",
+   "disabled_or_unavailable": "Hidden where confidence is low."
+  },
+  {
+   "component": "Assistant",
+   "click_hover_keyboard": "Enter sends. Shift-Enter adds a line. Evidence links move the playhead and highlight the range they refer to. Cancel stops work and changes nothing.",
+   "disabled_or_unavailable": "When the cloud assistant is off the request box is off and says why. Goal chips still work."
+  },
+  {
+   "component": "Change review",
+   "click_hover_keyboard": "Editing any value turns the preview stale and enables Render. Approve is off while the preview is out of date. Reject needs no confirmation.",
+   "disabled_or_unavailable": "Approve is off with the message “Render the preview first” when the preview is stale."
+  },
+  {
+   "component": "Audition",
+   "click_hover_keyboard": "Space switches A and B. The order is random for each audition. Loudness matching affects listening only. Keep this change, Keep the original and Discard have equal size and weight.",
+   "disabled_or_unavailable": "When the session changes, Keep this change turns off and the strip says why. The other two stay on."
+  },
+  {
+   "component": "Task history",
+   "click_hover_keyboard": "Click a row to open its receipt. Undo is available only for Applied tasks. Recovery required offers three actions with the evidence beside them.",
+   "disabled_or_unavailable": "Undo reads “Not needed” or “Not available” instead of a blank."
+  },
+  {
+   "component": "Recording health",
+   "click_hover_keyboard": "The status bar is always visible while recording. Details opens the take list. The disk-full dialog takes focus and needs a click to close.",
+   "disabled_or_unavailable": "Not applicable."
+  }
+ ],
+ "microcopy": [
+  {
+   "section": "5.4 Assistant panel",
+   "strings": [
+    {
+     "key": "Title",
+     "text": "Assistant"
+    },
+    {
+     "key": "Modes",
+     "text": "Explain · Suggest · Apply"
+    },
+    {
+     "key": "Mode help",
+     "text": "Suggest builds a proposal for you to review. Nothing changes until you approve."
+    },
+    {
+     "key": "Request box",
+     "text": "What do you want?"
+    },
+    {
+     "key": "Goal chips",
+     "text": "Headroom · Vocal clarity · Even level"
+    },
+    {
+     "key": "Primary action",
+     "text": "Make a proposal"
+    },
+    {
+     "key": "Running",
+     "text": "Measuring the vocal and checking headroom… Step 2 of 3 · nothing has been changed"
+    },
+    {
+     "key": "Cancelling",
+     "text": "Stopping… Nothing was changed. This takes a moment."
+    },
+    {
+     "key": "Unavailable",
+     "text": "The cloud assistant is off. The local goal controls still work."
+    },
+    {
+     "key": "Details",
+     "text": "Details (measurements, rule, version)"
+    }
+   ]
+  },
+  {
+   "section": "5.5 Change review",
+   "strings": [
+    {
+     "key": "Proposal title",
+     "text": "Proposal: review 1 change"
+    },
+    {
+     "key": "Badge",
+     "text": "Not applied"
+    },
+    {
+     "key": "Stale",
+     "text": "Preview out of date: you changed a value. Render again to hear this version."
+    },
+    {
+     "key": "Why",
+     "text": "True peak moves from −2.3 to −6.0 dBTP."
+    },
+    {
+     "key": "Basis",
+     "text": "Measured: true peak −2.3 dBTP, over 0:02.000 – 0:03.200 of Lead Vocal. Rule: headroom to −6.0 dBTP, version 1.2."
+    },
+    {
+     "key": "Limits",
+     "text": "Limited to 12 dB per change."
+    },
+    {
+     "key": "Actions",
+     "text": "Preview · Approve · Reject"
+    },
+    {
+     "key": "No change",
+     "text": "The vocal level is already within 0.5 dB of the target. Nothing was changed."
+    },
+    {
+     "key": "Cannot propose",
+     "text": "The source is clipped, so raising the level would not repair it. Nothing was changed."
+    },
+    {
+     "key": "What to do",
+     "text": "Record the part again with a lower input level. Choose a different take. Lower the level only, to leave more headroom."
+    }
+   ]
+  },
+  {
+   "section": "5.6 Audition",
+   "strings": [
+    {
+     "key": "Switch",
+     "text": "A · B (random order, no “better” label)"
+    },
+    {
+     "key": "Matched",
+     "text": "Loudness matched. Version B is played 0.2 LU quieter, so both sound equally loud. This is for listening only. Your exports are not matched."
+    },
+    {
+     "key": "Not matched",
+     "text": "Loudness not matched. Version B is 1.4 LU louder and may sound better for that reason."
+    },
+    {
+     "key": "Clipping",
+     "text": "One version adds new clipping: 3 samples at 0:02.840. Listen to both before you choose."
+    },
+    {
+     "key": "Actions",
+     "text": "Keep this change · Keep the original · Discard"
+    },
+    {
+     "key": "Footer",
+     "text": "Nothing changes in your session until you choose."
+    },
+    {
+     "key": "Stale",
+     "text": "The session changed after this proposal. Make a new proposal to hear it again."
+    }
+   ]
+  },
+  {
+   "section": "5.7 Task history",
+   "strings": [
+    {
+     "key": "Draft",
+     "text": "Not started. Waiting for your request."
+    },
+    {
+     "key": "Validated",
+     "text": "Checked against the track. Not yet previewed."
+    },
+    {
+     "key": "Previewing",
+     "text": "Rendering a preview…"
+    },
+    {
+     "key": "Ready for approval",
+     "text": "Waiting for you."
+    },
+    {
+     "key": "Approved",
+     "text": "You approved this. Not yet written."
+    },
+    {
+     "key": "Committing",
+     "text": "Writing the change to the session…"
+    },
+    {
+     "key": "Applied",
+     "text": "Applied: 1 change. Undo."
+    },
+    {
+     "key": "Rejected",
+     "text": "You rejected this proposal. Nothing changed."
+    },
+    {
+     "key": "Cancelled",
+     "text": "You cancelled while it was running. Nothing changed."
+    },
+    {
+     "key": "Stale",
+     "text": "The session changed after this proposal. Nothing changed."
+    },
+    {
+     "key": "Failed",
+     "text": "The compressor could not be loaded. Nothing changed."
+    },
+    {
+     "key": "Recovery required",
+     "text": "We could not confirm whether this change was saved. Your session may or may not include it. Actions: Check the session · Apply again · Leave as it is."
+    }
+   ]
+  },
+  {
+   "section": "5.8 Recording health",
+   "strings": [
+    {
+     "key": "Status",
+     "text": "Recording 04:12 · Interface 1 · In 1 · Writing to disk"
+    },
+    {
+     "key": "Warning",
+     "text": "0.8 s of input was lost: the disk is too slow."
+    },
+    {
+     "key": "Error title",
+     "text": "Recording stopped"
+    },
+    {
+     "key": "Error body",
+     "text": "The disk is full. Your take so far is kept: 4:12 of audio, saved to Lead take 5."
+    },
+    {
+     "key": "Error help",
+     "text": "Free up space, then start a new take. Nothing was lost before 4:12."
+    },
+    {
+     "key": "Actions",
+     "text": "Show take · Open storage settings · OK"
+    },
+    {
+     "key": "Recovered",
+     "text": "A take was recovered. SoundCraft closed unexpectedly while recording. 2:41 of audio was recovered and added to Lead Vocal as “Recovered take”. Listen · Keep take · Discard"
+    }
+   ]
+  },
+  {
+   "section": "5.9 Vocal Check and cloud",
+   "strings": [
+    {
+     "key": "Steps",
+     "text": "Add audio · Backing · Lead vocal · Sa and octave · Done"
+    },
+    {
+     "key": "Step 3",
+     "text": "Confirm your lead vocal"
+    },
+    {
+     "key": "Clipping check",
+     "text": "Clipping: 14 samples at 0:12.4. Pitch is still measured; level changes cannot repair it."
+    },
+    {
+     "key": "Cloud title",
+     "text": "Turn on the cloud assistant?"
+    },
+    {
+     "key": "Intro",
+     "text": "It is off. Everything else works without it. You can turn it off at any time."
+    },
+    {
+     "key": "Provider",
+     "text": "Anthropic · api.anthropic.com/v1/messages"
+    },
+    {
+     "key": "Data sent",
+     "text": "Text only: your request, track names, and measured values such as level and pitch. Never audio."
+    },
+    {
+     "key": "Retention",
+     "text": "Set by Anthropic. Check the current terms before you start."
+    },
+    {
+     "key": "Key",
+     "text": "Stored in the macOS Keychain, not in your session."
+    },
+    {
+     "key": "Warning",
+     "text": "Using your own key does not remove charges or Anthropic’s data retention."
+    },
+    {
+     "key": "Budget",
+     "text": "Monthly budget · required before first use. The assistant stops when this is reached. Set it to 0 to keep it off."
+    },
+    {
+     "key": "Actions",
+     "text": "Keep it off · Turn on"
+    }
+   ]
+  },
+  {
+   "section": "Missing media and empty states",
+   "strings": [
+    {
+     "key": "Missing title",
+     "text": "Audio file not found"
+    },
+    {
+     "key": "Missing body",
+     "text": "Lead take 3 stays silent in the timeline and shows as missing. SoundCraft does not play anything in its place."
+    },
+    {
+     "key": "Actions",
+     "text": "Find file… · Search a folder… · Later"
+    },
+    {
+     "key": "Pitch empty",
+     "text": "Select a range on the lead vocal to see its pitch."
+    },
+    {
+     "key": "History empty",
+     "text": "No tasks yet. Changes you accept appear here."
+    },
+    {
+     "key": "Assistant empty",
+     "text": "Choose a track and a range, then say what you want."
+    },
+    {
+     "key": "Pitch loading",
+     "text": "Measuring pitch… 40%"
+    },
+    {
+     "key": "Pitch error",
+     "text": "Pitch could not be measured for this range. Try a section with a single voice."
+    }
+   ]
+  }
+ ]
+}
