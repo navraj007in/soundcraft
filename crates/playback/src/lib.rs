@@ -71,9 +71,11 @@ impl std::fmt::Display for CaptureError {
 impl std::error::Error for CaptureError {}
 
 /// How long a state capture may take before it is reported as failed.
+#[cfg(not(target_arch = "wasm32"))]
 const CAPTURE_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Ask the audio thread for every plugin state and wait up to `wait` for the answer.
+#[cfg(not(target_arch = "wasm32"))]
 fn request_capture(tx: &Sender<Cmd>, wait: std::time::Duration) -> Result<PluginStates, CaptureError> {
     let (rtx, rrx) = channel();
     tx.send(Cmd::CaptureStates(rtx)).map_err(|_| CaptureError::Unavailable)?;
@@ -90,6 +92,7 @@ enum Cmd {
     /// A new snapshot plus the third-party instances it needs (created on the UI thread).
     Session(Arc<Session>, Vec<PreparedInstance>),
     /// Read every plugin state and reply.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     CaptureStates(Sender<PluginStates>),
     Input(Arc<record::InputRing>),
     Recording(bool),

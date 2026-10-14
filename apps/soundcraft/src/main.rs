@@ -229,8 +229,10 @@ fn main() -> eframe::Result {
     // Assistant mode: a per-launch token read from a private file (never the command line or the
     // environment, which other processes can see). A token file that cannot be trusted leaves the
     // control channel off rather than falling back to developer mode.
-    let control_token: Option<Result<String, String>> =
-        args.iter().position(|a| a == "--control-token-file").map(|i| args.get(i + 1).ok_or("--control-token-file needs a path".to_string()).and_then(|p| read_token_file(p)));
+    let control_token: Option<Result<String, String>> = args
+        .iter()
+        .position(|a| a == "--control-token-file")
+        .map(|i| args.get(i + 1).ok_or("--control-token-file needs a path".to_string()).and_then(|p| read_token_file(p)));
     let files: Vec<String> = args
         .iter()
         .enumerate()

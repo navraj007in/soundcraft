@@ -63,7 +63,8 @@ impl Engine {
         // document (a file written, the session replaced or saved elsewhere, quitting) cannot be
         // taken back, so none is admitted, and nothing runs before every operation is checked.
         for (i, (id, _)) in ops.iter().enumerate() {
-            let bad = |why: String| EngineError::BadParams("session.apply".into(), format!("operation {} (`{id}`): {why}, nothing was applied", i + 1));
+            let bad =
+                |why: String| EngineError::BadParams("session.apply".into(), format!("operation {} (`{id}`): {why}, nothing was applied", i + 1));
             let Some(spec) = crate::find_command(id) else { return Err(bad("unknown command".into())) };
             if !spec.undoable || spec.view {
                 return Err(bad("only undoable document edits can be grouped".into()));

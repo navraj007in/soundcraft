@@ -40,7 +40,7 @@ A passing entry needs an evidence link and a date (PRD §15).
 | 4 | Session revision | Not documented | Exists; not exposed | **Measured on the spike branch:** moves on selection, playhead and save/bounce, not only edits | n/a | P0-T06 (done, [spike-guarded-publish.md](spike-guarded-publish.md)); P1-E01 |
 | 5 | Undo and snapshots | Copy-on-write snapshots | Matches, plus gesture coalescing | **Measured on the spike branch:** grouped publish as one undo entry, all or nothing | Agree | P0-T06 (done); P1-E02 |
 | 6 | Batch commands | Sequential, `keep_going` | Sequential, no transaction | Unverified | Agree | P0-T06 (contrast with P1-E02) |
-| 7 | Local control | Loopback TCP; auth not mentioned | Loopback TCP; no auth check | **Measured on the test branch:** an HTTP-framed JSON body from a web page executes `engine.execute` | Agree | P0-T07 (done, [control-channel-protection.md](control-channel-protection.md)); P1-E03 |
+| 7 | Local control | Loopback TCP; auth not mentioned | Loopback TCP; no auth check | **Measured before the fix (15 October 2026):** an HTTP-framed JSON body from a web page executed `engine.execute`; the server now closes such connections and has an authenticated assistant mode | Agree | P0-T07 (done, [control-channel-protection.md](control-channel-protection.md)); P1-E03 |
 | 8 | Audio to MIDI | "Pitch tracker" | YIN rounded to MIDI notes; no confidence | Unverified | Agree | P0-T08 |
 | 9 | Backing import | MP3, AAC/M4A supported | symphonia, gapless on | **Partly measured, inspection host:** WAV and LAME-tagged MP3 correct; **AAC +1024/+2112 samples late**; untagged MP3 +1104; 100 save/reopen cycles clean | Formats agree; the docs don't mention AAC priming | P0-T03 (done, [import-matrix.md](import-matrix.md)); repairs P1-E07 |
 | 10 | Built-in processors | EQ and compressor listed; fidelity unmeasured | Present; 1 EQ and 1 compressor test | Unverified | Agree | P1-M02, P2-M01, P2-M02 |
@@ -155,8 +155,8 @@ A passing entry needs an evidence link and a date (PRD §15).
   `ui.key` and other input injection (`crates/ui-egui/src/control.rs:5-13`). Tests: 0 in
   `control_server.rs`.
 - **Consequence:** any local process can drive the app. This is a transport, not an authorisation
-  boundary (PRD §10.2); fixed by P1-E03.
-- **Runtime-tested (P0-T07, branch `spike/control-auth`, 14 October 2026):** see [control-channel-protection.md](control-channel-protection.md). Seven tests written against today's server all fail, including one in which an HTTP POST with a JSON body runs `engine.execute`; a throwaway reference implementation made all pass.
+  boundary (PRD §10.2). The server-side protection (token, allowlist, HTTP rejection, bounds) landed on 15 October 2026; the companion's token generation is still P1-E03 work.
+- **Runtime-tested (P0-T07, branch `spike/control-auth`, 14 October 2026):** see [control-channel-protection.md](control-channel-protection.md). The seven tests written against the earlier server failed, including one in which an HTTP POST with a JSON body ran `engine.execute`; the server now passes all eight.
 
 ### 8. Audio to MIDI (S11, S15)
 

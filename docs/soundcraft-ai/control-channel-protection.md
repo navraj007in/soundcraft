@@ -17,9 +17,9 @@ Two ways it can be reached by something the user didn't intend:
 2. **Any web page the user has open.** A browser will send `POST / HTTP/1.1` with a plain-text body
    to `127.0.0.1:<port>`. The server answers each HTTP header line with "bad JSON" and then reads
    the body line, which is valid JSON, and runs it. **Measured:** test
-   `an_http_request_carrying_a_json_body_is_not_executed`, run against today's server, ends with
+   `an_http_request_carrying_a_json_body_is_not_executed`, run against the server before this change, ended with
    `an HTTP-framed body was executed: ["engine.execute"]`, even with a token configured (the stand-in
-   ignores it). The port is random with `--control 0`, but a page can probe ports, and the port is
+   ignored it). The port is random with `--control 0`, but a page can probe ports, and the port is
    printed to stdout and logs.
 
 PRD §10.2 requires an authenticated endpoint scoped to the launched session before the assistant
@@ -158,8 +158,7 @@ each defence was removed in turn; every removal made at least one test fail:
 | Token comparison (always true) | `a_wrong_token…`, `a_token_from_a_previous_launch…` |
 | "Must authenticate first" check | `without_a_token_nothing_reaches…`, `a_token_from_a_previous_launch…` |
 
-The reference was then discarded (the branch keeps the stand-in), so P1-E03 writes the production
-version; the algorithm above is complete enough to reproduce it.
+The reference was discarded; the production version in `control_server.rs` follows the same algorithm.
 
 ## 6. P1-E03 work breakdown
 

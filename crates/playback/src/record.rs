@@ -324,7 +324,8 @@ mod tests {
         vox.write(&[0.25; 150], 3);
         assert_eq!(decode(&dir.join("Vox_01.wav"))[0].len(), 100, "the header covers what it has seen");
 
-        let shared = Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 16), dropped: AtomicUsize::new(0), fault: Mutex::new(None) });
+        let shared =
+            Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 16), dropped: AtomicUsize::new(0), fault: Mutex::new(None) });
         let sh = Arc::clone(&shared);
         let writer = std::thread::spawn(move || write_takes(&sh, vec![gtr, vox], 3));
         let input: Vec<f32> = (0..3 * 4_800).map(|i| i as f32 / 20_000.0).collect();
@@ -355,7 +356,12 @@ mod fault_tests {
 
     /// A recorder with no input device behind it, so the whole arm and finish path can run.
     fn deviceless(ring_samples: usize, channels: usize, rate: u32) -> Recorder {
-        let shared = Arc::new(Shared { armed: AtomicBool::new(false), ring: CaptureRing::new(ring_samples), dropped: AtomicUsize::new(0), fault: Mutex::new(None) });
+        let shared = Arc::new(Shared {
+            armed: AtomicBool::new(false),
+            ring: CaptureRing::new(ring_samples),
+            dropped: AtomicUsize::new(0),
+            fault: Mutex::new(None),
+        });
         Recorder {
             shared,
             monitor: InputRing::new(channels, rate),
@@ -443,7 +449,8 @@ mod fault_tests {
             frames: 0,
             error: None,
         };
-        let shared = Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 16), dropped: AtomicUsize::new(0), fault: Mutex::new(None) });
+        let shared =
+            Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 16), dropped: AtomicUsize::new(0), fault: Mutex::new(None) });
         let sh = Arc::clone(&shared);
         let writer = std::thread::spawn(move || write_takes(&sh, vec![broken], 1));
         let mut owed = 0;
@@ -464,9 +471,17 @@ mod fault_tests {
         let dir = temp("livefault");
         let path = dir.join("A.wav");
         TakeWriter::create(TrackId(1), vec![0], path.clone(), 48_000).unwrap();
-        let broken =
-            TakeWriter { id: TrackId(1), inputs: vec![0], path: path.clone(), file: File::open(&path).unwrap(), rate: 48_000, frames: 0, error: None };
-        let shared = Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 16), dropped: AtomicUsize::new(0), fault: Mutex::new(None) });
+        let broken = TakeWriter {
+            id: TrackId(1),
+            inputs: vec![0],
+            path: path.clone(),
+            file: File::open(&path).unwrap(),
+            rate: 48_000,
+            frames: 0,
+            error: None,
+        };
+        let shared =
+            Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 16), dropped: AtomicUsize::new(0), fault: Mutex::new(None) });
         let sh = Arc::clone(&shared);
         let writer = std::thread::spawn(move || write_takes(&sh, vec![broken], 1));
         let mut owed = 0;
@@ -501,7 +516,8 @@ mod fault_tests {
         let Ok(dir) = std::env::var("SC_KILL_DIR") else { return };
         let path = PathBuf::from(dir).join("A.wav");
         let take = TakeWriter::create(TrackId(1), vec![0], path, 48_000).unwrap();
-        let shared = Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 18), dropped: AtomicUsize::new(0), fault: Mutex::new(None) });
+        let shared =
+            Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 18), dropped: AtomicUsize::new(0), fault: Mutex::new(None) });
         let sh = Arc::clone(&shared);
         std::thread::spawn(move || write_takes(&sh, vec![take], 1));
         let mut owed = 0;
@@ -551,7 +567,8 @@ mod fault_tests {
         let Ok(dir) = std::env::var("SC_FULL_DISK_DIR") else { return };
         let path = PathBuf::from(dir).join("Full_01.wav");
         let take = TakeWriter::create(TrackId(1), vec![0], path.clone(), 48_000).unwrap();
-        let shared = Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 18), dropped: AtomicUsize::new(0), fault: Mutex::new(None) });
+        let shared =
+            Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 18), dropped: AtomicUsize::new(0), fault: Mutex::new(None) });
         let sh = Arc::clone(&shared);
         let writer = std::thread::spawn(move || write_takes(&sh, vec![take], 1));
         let mut owed = 0;
