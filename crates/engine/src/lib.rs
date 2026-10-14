@@ -11,6 +11,7 @@ pub mod clip_group_file;
 pub mod cmd;
 pub mod demo;
 pub mod edit;
+mod group;
 pub mod inspect;
 pub mod io;
 pub mod score;
@@ -47,6 +48,8 @@ pub enum EngineError {
     Unsupported(String),
     #[error("internal error in `{0}`: {1}")]
     Internal(String, String),
+    #[error("stale: {0}")]
+    Stale(String),
 }
 
 pub type Result<T> = std::result::Result<T, EngineError>;
@@ -118,6 +121,8 @@ pub struct Engine {
     dirty_at: Cell<(u64, bool)>,
     /// Gesture key for undo coalescing (see `execute_merged`).
     merge_key: Option<String>,
+    /// What `content_revision` last saw (spike P0-T06).
+    content_seen: std::cell::RefCell<group::ContentSeen>,
     /// Messages for the UI status line / agents.
     pub messages: Vec<String>,
 }
@@ -132,6 +137,7 @@ impl Engine {
     pub fn new(session: Session) -> Self {
         install_panic_hook();
         let doc = Arc::new(session);
+        let seen = Arc::clone(&doc);
         Engine {
             saved: Arc::clone(&doc),
             doc,
@@ -147,6 +153,7 @@ impl Engine {
             dirty: false,
             dirty_at: Cell::new((0, false)),
             merge_key: None,
+            content_seen: std::cell::RefCell::new(group::ContentSeen::new(seen)),
             messages: Vec::new(),
         }
     }
