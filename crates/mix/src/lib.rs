@@ -1895,8 +1895,44 @@ fn apply_matrix(src: &[Vec<f32>], frames: usize, dst: &mut [Vec<f32>], m: &Matri
 }
 
 /// Ceiling on one offline render (samples summed over channels): 2^29 f32 = 2 GiB, about 93
-/// minutes of stereo at 48 kHz. Longer requests are truncated rather than exhausting memory.
+/// minutes of stereo at 48 kHz. [`render_range`] and [`render_bus`] truncate longer requests;
+/// [`try_render_range`] and [`try_render_bus`] refuse them, which is what exports must use.
 pub const MAX_RENDER_SAMPLES: usize = 1 << 29;
+
+/// A render request too large to hold in memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderTooLong {
+    /// Frames asked for.
+    pub requested: u64,
+    /// Most frames one render of this channel count may produce.
+    pub max: u64,
+}
+
+impl std::fmt::Display for RenderTooLong {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} frames requested but one render holds at most {}; render it in shorter ranges", self.requested, self.max)
+    }
+}
+
+impl std::error::Error for RenderTooLong {}
+
+fn check_render_len(range: Range, channels: usize) -> Result<(), RenderTooLong> {
+    let requested = u64::try_from(range.len().max(0)).unwrap_or(0);
+    let max = (MAX_RENDER_SAMPLES / channels.max(1)) as u64;
+    if requested > max { Err(RenderTooLong { requested, max }) } else { Ok(()) }
+}
+
+/// [`render_range`], but an oversize request is an error instead of a silently shortened result.
+pub fn try_render_range(s: &Session, range: Range, block: usize) -> Result<Vec<Vec<f32>>, RenderTooLong> {
+    check_render_len(range, main_channels(s))?;
+    Ok(render_range(s, range, block))
+}
+
+/// [`render_bus`], but an oversize request is an error instead of a silently shortened result.
+pub fn try_render_bus(s: &Session, bus: BusId, range: Range, block: usize) -> Result<Vec<Vec<f32>>, RenderTooLong> {
+    check_render_len(range, s.bus(bus).map_or(1, |b| b.format.channels()))?;
+    Ok(render_bus(s, bus, range, block))
+}
 
 /// Offline render of the main mix over `range` (planar, [`main_channels`] channels in SMPTE/WAV
 /// order). The mix's delay-compensation latency is removed, so the result lines up with the
@@ -2178,6 +2214,15 @@ mod tests {
         let normal = level(&s);
         s.track_mut(t).unwrap().mixer.solo = true;
         assert!((level(&s) - normal).abs() < 1e-6 && normal > 0.1, "{normal} vs {}", level(&s));
+    }
+
+    #[test]
+    fn an_oversize_render_is_an_error_not_a_shortened_success() {
+        let (s, _) = impulse_session();
+        let hours = s.sample_rate.samples(2.0 * 3600.0);
+        let e = try_render_range(&s, Range::new(0, hours), 512).unwrap_err();
+        assert_eq!(e.requested, hours as u64);
+        assert!(try_render_range(&s, Range::new(0, 2048), 512).is_ok());
     }
 
     #[test]

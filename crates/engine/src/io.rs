@@ -261,7 +261,7 @@ pub fn bounce_source(
     if r.len() > s.sample_rate.samples(4.0 * 3600.0) {
         return Err(EngineError::BadParams("file.bounce_mix".into(), "bounces are limited to 4 hours".into()));
     }
-    let (mut ch, fmt) = render_bounce(s, r, fold_stereo, bus);
+    let (mut ch, fmt) = render_bounce(s, r, fold_stereo, bus)?;
     if normalize {
         soundcraft_dsp::offline::normalize(&mut ch, -0.1, false);
     }
@@ -277,21 +277,22 @@ pub fn bounce_source(
 }
 
 /// The main mix over `r` and its format (folded to stereo on request).
-fn render_main(s: &Session, r: Range, fold_stereo: bool) -> (Vec<Vec<f32>>, ChannelFormat) {
+fn render_main(s: &Session, r: Range, fold_stereo: bool) -> Result<(Vec<Vec<f32>>, ChannelFormat)> {
     render_bounce(s, r, fold_stereo, None)
 }
 
 /// The main mix, or one bus, over `r`.
-fn render_bounce(s: &Session, r: Range, fold_stereo: bool, bus: Option<BusId>) -> (Vec<Vec<f32>>, ChannelFormat) {
+fn render_bounce(s: &Session, r: Range, fold_stereo: bool, bus: Option<BusId>) -> Result<(Vec<Vec<f32>>, ChannelFormat)> {
+    let too_long = |err: soundcraft_mix::RenderTooLong| EngineError::BadParams("file.bounce_mix".into(), err.to_string());
     let (ch, fmt) = if let Some(id) = bus {
         let fmt = s.bus(id).map(|b| b.format).unwrap_or(ChannelFormat::Stereo);
-        (soundcraft_mix::render_bus(s, id, r, 1024), fmt)
+        (soundcraft_mix::try_render_bus(s, id, r, 1024).map_err(too_long)?, fmt)
     } else {
-        let ch = soundcraft_mix::render_range(s, r, 1024);
+        let ch = soundcraft_mix::try_render_range(s, r, 1024).map_err(too_long)?;
         let fmt = if ch.len() <= 2 { ChannelFormat::Stereo } else { s.main_format() };
         (ch, fmt)
     };
-    if fold_stereo && ch.len() > 2 { (soundcraft_mix::fold_down_stereo(fmt, &ch), ChannelFormat::Stereo) } else { (ch, fmt) }
+    Ok(if fold_stereo && ch.len() > 2 { (soundcraft_mix::fold_down_stereo(fmt, &ch), ChannelFormat::Stereo) } else { (ch, fmt) })
 }
 
 /// Bounce one file per audio/instrument track (each soloed, so its sends and auxes are included)
@@ -321,7 +322,7 @@ pub fn bounce_stems_with(e: &Engine, dir: &str, r: Range, opts: &EncodeOptions, 
         for t in &mut solo.tracks {
             t.mixer.solo = t.id == id;
         }
-        let (ch, fmt) = render_main(&solo, r, fold_stereo);
+        let (ch, fmt) = render_main(&solo, r, fold_stereo)?;
         let buf = AudioBuffer { sample_rate: s.sample_rate.hz(), channels: ch };
         let bytes = soundcraft_audio_io::encode_with_channel_mask(&buf, opts, fmt.channel_mask()).map_err(|err| EngineError::Io(err.to_string()))?;
         let path = Path::new(dir).join(format!("{} - {}.{ext}", sanitize_name(&s.name), sanitize_name(&name)));
