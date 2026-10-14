@@ -341,12 +341,24 @@ impl SoundApp {
         if let Some(r) = menus::run_ui_command(self, id, &params) {
             return r;
         }
+        let mut capture_problem = None;
         if id.starts_with("session.save") || id.starts_with("file.bounce") {
             // Third-party plugins keep state the session can't see: store it first.
-            self.capture_plugin_states();
+            if let Err(e) = self.capture_plugin_states() {
+                if id.starts_with("file.bounce") {
+                    // A render from stale plugin settings would sound wrong without saying so.
+                    return Err(format!("Not bounced: the plugin settings could not be read ({e})"));
+                }
+                capture_problem = Some(e);
+            }
         }
         match self.engine.execute(id, &params) {
             Ok(v) => {
+                if let Some(e) = &capture_problem {
+                    // The file is written, but its plugin settings are the last ones stored.
+                    self.ui.status = format!("Saved, but the plugin settings could not be read ({e}); plugins keep their last saved settings");
+                    log::warn!("{id}: plugin states not captured: {e}");
+                }
                 if id == "app.quit" {
                     self.quit_requested = true;
                 }
@@ -489,15 +501,16 @@ impl SoundApp {
 
     /// Reads every live third-party plugin's state from the audio engine and stores it on its
     /// insert (`mix.insert_state`), so saves and bounces include it.
-    pub fn capture_plugin_states(&mut self) {
-        let Some(p) = &self.player else { return };
-        for (t, slot, data) in p.capture_states() {
+    pub fn capture_plugin_states(&mut self) -> Result<(), String> {
+        let Some(p) = &self.player else { return Ok(()) };
+        for (t, slot, data) in p.capture_states().map_err(|e| e.to_string())? {
             let slot = if slot == soundcraft_mix::INSTRUMENT_SLOT { json!("instrument") } else { json!(slot) };
             let state = soundcraft_model::b64::encode(&data);
             if let Err(e) = self.engine.execute("mix.insert_state", &json!({"track": t.0, "slot": slot, "state": state})) {
                 log::warn!("storing plugin state: {e}");
             }
         }
+        Ok(())
     }
 
     /// Parameter edits made in plugin editors go into the session (one undo step per gesture).
@@ -521,7 +534,11 @@ impl SoundApp {
             return;
         }
         self.last_autosave = Some(std::time::Instant::now());
-        self.capture_plugin_states();
+        if let Err(e) = self.capture_plugin_states() {
+            // Never write a recovery copy that silently carries old plugin settings.
+            log::warn!("autosave skipped: plugin states not captured: {e}");
+            return;
+        }
         let file = soundcraft_engine::io::sanitize_name(&self.engine.session().name);
         let path = dir.join(soundcraft_engine::io::recovery_dir_name(self.engine.session())).join(format!("{file}.scraft"));
         if let Some(parent) = path.parent() {

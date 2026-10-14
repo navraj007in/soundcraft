@@ -49,6 +49,40 @@ pub struct MeterSnapshot {
 /// Plugin states read from the live instances: `(track, slot or INSTRUMENT_SLOT, state)`.
 pub type PluginStates = Vec<(TrackId, usize, Vec<u8>)>;
 
+/// Why plugin states could not be read. An empty list is a valid answer (no stateful plugins), so
+/// a failure must never look like one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureError {
+    /// The audio thread did not answer in time (a plugin is slow to serialise, or the device stalled).
+    Timeout,
+    /// The audio thread is gone.
+    Unavailable,
+}
+
+impl std::fmt::Display for CaptureError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CaptureError::Timeout => f.write_str("the audio engine did not answer in time"),
+            CaptureError::Unavailable => f.write_str("the audio engine is not running"),
+        }
+    }
+}
+
+impl std::error::Error for CaptureError {}
+
+/// How long a state capture may take before it is reported as failed.
+const CAPTURE_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Ask the audio thread for every plugin state and wait up to `wait` for the answer.
+fn request_capture(tx: &Sender<Cmd>, wait: std::time::Duration) -> Result<PluginStates, CaptureError> {
+    let (rtx, rrx) = channel();
+    tx.send(Cmd::CaptureStates(rtx)).map_err(|_| CaptureError::Unavailable)?;
+    rrx.recv_timeout(wait).map_err(|e| match e {
+        std::sync::mpsc::RecvTimeoutError::Timeout => CaptureError::Timeout,
+        std::sync::mpsc::RecvTimeoutError::Disconnected => CaptureError::Unavailable,
+    })
+}
+
 /// A parameter edit made in a plugin's own editor: `(track, slot, param id, value)`.
 pub type EditorEdit = (TrackId, usize, String, f32);
 
@@ -139,8 +173,13 @@ impl AudioState {
                 Cmd::Input(r) => self.input = Some(r),
                 Cmd::Recording(r) => self.recording = r,
                 Cmd::CaptureStates(reply) => {
+                    let started = std::time::Instant::now();
                     self.mix.ensure_synced(&self.session);
                     let _ = reply.send(self.mix.capture_states());
+                    // Plugin serialisation runs between blocks on this thread: say so when it is long.
+                    if started.elapsed() > std::time::Duration::from_millis(20) {
+                        log::warn!("plugin state capture held the audio thread for {} ms", started.elapsed().as_millis());
+                    }
                 }
                 Cmd::Session(s, instances) => {
                     changed = true;
@@ -556,20 +595,17 @@ impl Player {
     }
 
     /// Reads the state of every live third-party plugin (for saving the session). Waits briefly
-    /// for the audio thread to answer between two blocks; empty when it does not answer.
-    pub fn capture_states(&self) -> PluginStates {
+    /// for the audio thread to answer between two blocks; a failure is an error, never an empty
+    /// list (which means "no stateful plugins").
+    pub fn capture_states(&self) -> Result<PluginStates, CaptureError> {
         self.side().collect_garbage();
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let (tx, rx) = channel();
-            if self.tx.send(Cmd::CaptureStates(tx)).is_err() {
-                return Vec::new();
-            }
-            rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap_or_default()
+            request_capture(&self.tx, CAPTURE_WAIT)
         }
         #[cfg(target_arch = "wasm32")]
         {
-            Vec::new()
+            Ok(Vec::new())
         }
     }
 
@@ -1021,6 +1057,70 @@ mod tests {
         assert_eq!(side.shadow.len(), 1);
         side.forget_all();
         assert!(side.shadow.is_empty(), "nothing is remembered across a replacement");
+    }
+
+    struct Slow(Box<dyn Plugin>);
+
+    impl Plugin for Slow {
+        fn info(&self) -> &'static soundcraft_dsp::PluginInfo {
+            self.0.info()
+        }
+        fn prepare(&mut self, sr: f32, mb: usize, ch: usize) {
+            self.0.prepare(sr, mb, ch);
+        }
+        fn reset(&mut self) {
+            self.0.reset();
+        }
+        fn set_param(&mut self, id: &str, v: f32) -> bool {
+            self.0.set_param(id, v)
+        }
+        fn param(&self, id: &str) -> Option<f32> {
+            self.0.param(id)
+        }
+        fn process(&mut self, io: &mut [Vec<f32>], frames: usize) {
+            self.0.process(io, frames);
+        }
+        fn save_state(&mut self) -> Option<Vec<u8>> {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            Some(b"late".to_vec())
+        }
+    }
+
+    #[test]
+    fn a_slow_serializer_is_a_timeout_error_not_an_empty_answer() {
+        use soundcraft_model::{ChannelFormat, Insert, TrackKind};
+        let mut s = soundcraft_model::Session::default();
+        let t = s.add_track(TrackKind::Audio, ChannelFormat::Stereo, None);
+        s.track_mut(t).unwrap().mixer.inserts[1] = Some(Insert::new("clap:test.slow"));
+        let shared = Arc::new(Shared {
+            position: AtomicI64::new(0),
+            playing: AtomicBool::new(false),
+            speed: AtomicU32::new(1000),
+            meters: Mutex::new(MeterSnapshot::default()),
+        });
+        let (tx, rx) = channel();
+        let (gtx, _grx) = channel();
+        let mut st = AudioState::new(rx, shared, Arc::new(soundcraft_model::Session::default()), 48_000.0, gtx);
+        let plugin: Box<dyn Plugin> = Box::new(Slow(soundcraft_dsp::create("gain").unwrap()));
+        tx.send(Cmd::Session(Arc::new(s), vec![PreparedInstance { track: t, slot: 1, id: "clap:test.slow".into(), ch: 2, plugin }])).unwrap();
+        let audio = std::thread::spawn(move || {
+            let mut out = vec![0.0f32; 256];
+            for _ in 0..40 {
+                st.fill(&mut out, 2);
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        });
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        assert_eq!(request_capture(&tx, std::time::Duration::from_millis(100)), Err(CaptureError::Timeout));
+        // Given long enough, the same capture succeeds with the plugin's state.
+        let ok = request_capture(&tx, std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(ok, vec![(t, 1, b"late".to_vec())]);
+        drop(tx);
+        let _ = audio.join();
+        // No audio thread at all is "unavailable", not an empty list.
+        let (dead_tx, dead_rx) = channel::<Cmd>();
+        drop(dead_rx);
+        assert_eq!(request_capture(&dead_tx, std::time::Duration::from_millis(10)), Err(CaptureError::Unavailable));
     }
 
     #[test]
