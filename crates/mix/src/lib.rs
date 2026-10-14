@@ -353,6 +353,8 @@ pub struct MixEngine {
     adopt: HashMap<(TrackId, usize), PreparedInstance>,
     /// Instances `sync` took out of service, for the host to drop (see [`MixEngine::take_retired`]).
     retired: Vec<Box<dyn Plugin>>,
+    /// Tracks implicitly soloed this block (reused buffer).
+    implicit_solo: Vec<TrackId>,
     /// Ownership workspace reused for parallel strip processing.
     work: Vec<(usize, Strip)>,
 }
@@ -411,6 +413,7 @@ impl MixEngine {
             order: Vec::new(),
             latency: 0,
             track_latency: 0,
+            implicit_solo: Vec::new(),
             bus_latency: HashMap::new(),
             out_latency: HashMap::new(),
             input: Vec::new(),
@@ -622,6 +625,8 @@ impl MixEngine {
             c.iter_mut().take(frames).for_each(|x| *x = 0.0);
         }
         let any_solo = s.tracks.iter().any(|t| t.mixer.solo && !t.inactive);
+        let mut implicit_solo = std::mem::take(&mut self.implicit_solo);
+        implicit_solo_set(s, any_solo, &mut implicit_solo);
         let order = std::mem::take(&mut self.order);
         let live = |t: &Track| !(t.kind == TrackKind::Master || t.inactive || t.kind == TrackKind::Vca);
         let is_aux = |t: &Track| matches!(t.kind, TrackKind::Aux | TrackKind::Folder);
@@ -643,7 +648,7 @@ impl MixEngine {
         let live_in = LiveInput { input: &self.input, monitor_only: self.monitor_only, recording: self.recording };
         run_strips(&mut work, |(i, st)| {
             if let Some(t) = s.tracks.get(*i) {
-                process_strip(s, t, st, &busses, &live_in, pos, frames, any_solo);
+                process_strip(s, t, st, &busses, &live_in, pos, frames, any_solo, &implicit_solo);
             }
         });
         self.busses = busses;
@@ -699,7 +704,7 @@ impl MixEngine {
                 st.scratch.resize(self.max_block, 0.0);
             }
             let live_in = LiveInput { input: &self.input, monitor_only: self.monitor_only, recording: self.recording };
-            process_strip(s, t, &mut st, &self.busses, &live_in, pos, frames, any_solo);
+            process_strip(s, t, &mut st, &self.busses, &live_in, pos, frames, any_solo, &implicit_solo);
             let ch = st.buf.len();
             st.align.set(0, ch);
             st.align_pre.set(0, ch);
@@ -708,6 +713,7 @@ impl MixEngine {
             self.strips.insert(t.id, st);
         }
         self.order = order;
+        self.implicit_solo = implicit_solo;
         // Master faders process the main mix.
         for t in s.tracks.iter().filter(|t| t.kind == TrackKind::Master && !t.inactive) {
             if let Some(strip) = self.strips.get_mut(&t.id) {
@@ -931,6 +937,7 @@ fn process_strip(
     pos: Samples,
     frames: usize,
     any_solo: bool,
+    implicit_solo: &[TrackId],
 ) {
     for c in strip.buf.iter_mut() {
         c.iter_mut().take(frames).for_each(|x| *x = 0.0);
@@ -1056,7 +1063,7 @@ fn process_strip(
     strip.gr = gr;
     strip.latency = latency;
     let auto_mute = t.mixer.automation_mode.reads() && t.lane(&AutoParam::Mute).is_some_and(|l| l.value_at(pos, 0.0) >= 0.5);
-    let soloed_out = any_solo && !t.mixer.solo && !t.mixer.solo_safe && !receives_solo(s, t);
+    let soloed_out = any_solo && !t.mixer.solo && !t.mixer.solo_safe && !implicit_solo.contains(&t.id);
     strip.muted = t.mixer.mute || auto_mute || soloed_out;
     if t.mixer.sends.iter().flatten().any(|x| x.pre_fader) {
         strip.pre.resize_with(strip.buf.len(), Vec::new);
@@ -1309,12 +1316,29 @@ fn auxes_feeding(s: &Session, inputs: &[&Route]) -> Vec<usize> {
         .collect()
 }
 
-/// Implicit solo: an aux is not muted when a soloed track feeds its input bus.
-fn receives_solo(s: &Session, t: &Track) -> bool {
-    let Route::Bus(b) = &t.mixer.input else { return false };
-    s.tracks
-        .iter()
-        .any(|o| o.mixer.solo && (o.mixer.output == Route::Bus(*b) || o.mixer.sends.iter().flatten().any(|sn| sn.target == Route::Bus(*b))))
+/// Implicit solo: every strip the audible soloed material flows through, however many auxes deep.
+/// An aux is not muted while a soloed track, or another implicitly soloed aux, feeds its input bus.
+/// `out` is reused between blocks; the walk visits each track at most once, so cycles terminate.
+fn implicit_solo_set(s: &Session, any_solo: bool, out: &mut Vec<TrackId>) {
+    out.clear();
+    if !any_solo {
+        return;
+    }
+    let feeds = |o: &Track, b: BusId| o.mixer.output == Route::Bus(b) || o.mixer.sends.iter().flatten().any(|sn| sn.target == Route::Bus(b));
+    let mut grew = true;
+    while grew {
+        grew = false;
+        for t in &s.tracks {
+            let Route::Bus(b) = &t.mixer.input else { continue };
+            if t.inactive || out.contains(&t.id) {
+                continue;
+            }
+            if s.tracks.iter().any(|o| !o.inactive && (o.mixer.solo || out.contains(&o.id)) && feeds(o, *b)) {
+                out.push(t.id);
+                grew = true;
+            }
+        }
+    }
 }
 
 /// Metronome: a short synthesized blip on every beat of the tempo map, accented on beat 1 of
@@ -2133,6 +2157,27 @@ mod tests {
         c.params.insert("lookahead".into(), 5.0);
         c.params.insert("ratio".into(), 1.0);
         c
+    }
+
+    #[test]
+    fn soloing_a_track_keeps_every_aux_in_its_chain_audible() {
+        let (mut s, t) = impulse_session();
+        let b1 = s.add_bus("B1", ChannelFormat::Stereo);
+        let b2 = s.add_bus("B2", ChannelFormat::Stereo);
+        let a1 = s.add_track(TrackKind::Aux, ChannelFormat::Stereo, Some("Aux1"));
+        let a2 = s.add_track(TrackKind::Aux, ChannelFormat::Stereo, Some("Aux2"));
+        let cycle = s.add_track(TrackKind::Aux, ChannelFormat::Stereo, Some("Loop"));
+        s.track_mut(t).unwrap().mixer.output = Route::Bus(b1);
+        s.track_mut(a1).unwrap().mixer.input = Route::Bus(b1);
+        s.track_mut(a1).unwrap().mixer.output = Route::Bus(b2);
+        s.track_mut(a2).unwrap().mixer.input = Route::Bus(b2);
+        // A feedback pair that must not hang the walk.
+        s.track_mut(cycle).unwrap().mixer.input = Route::Bus(b2);
+        s.track_mut(cycle).unwrap().mixer.output = Route::Bus(b2);
+        let level = |s: &Session| render_range(s, Range::new(0, 2048), 512)[0].iter().fold(0.0f32, |m, x| m.max(x.abs()));
+        let normal = level(&s);
+        s.track_mut(t).unwrap().mixer.solo = true;
+        assert!((level(&s) - normal).abs() < 1e-6 && normal > 0.1, "{normal} vs {}", level(&s));
     }
 
     #[test]
