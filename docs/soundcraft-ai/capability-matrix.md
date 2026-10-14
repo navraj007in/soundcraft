@@ -1,7 +1,7 @@
 # SoundCraft-AI capability matrix
 
 **Task:** P0-T02 in the [execution plan](execution-plan.md) · **Spec:** PRD v0.3 §3.1–§3.2
-**Matrix version:** 0.2 · **Updated:** 14 October 2026 · **Status:** Source pass complete. Row 9 (backing import) has a first runtime measurement on the inspection host; every other runtime column is unverified.
+**Matrix version:** 0.3 · **Updated:** 14 October 2026 · **Status:** Source pass complete. Row 9 (backing import) has a first runtime measurement on the inspection host; every other runtime column is unverified.
 
 This matrix records, for each foundation capability the PRD depends on, three independent kinds of
 evidence (PRD §3.1):
@@ -37,8 +37,8 @@ A passing entry needs an evidence link and a date (PRD §15).
 | 1 | Disk recording | ⚠️ Stale: says "recording into RAM" | ✅ Streams to WAV on disk | Unverified | **Disagree** | P0-T04 |
 | 2 | Input and output devices | Default devices only | Default devices only | Unverified | Agree | P0-T05 |
 | 3 | Processing block | ⚠️ Incomplete: "fixed 512" | 512 maximum; callback-sized quantum | Unverified | **Disagree** (doc omits the smaller quantum) | P0-T05 |
-| 4 | Session revision | Not documented | Exists; not exposed | Unverified | n/a | P0-T06 |
-| 5 | Undo and snapshots | Copy-on-write snapshots | Matches, plus gesture coalescing | Unverified | Agree | P0-T06 |
+| 4 | Session revision | Not documented | Exists; not exposed | **Measured on the spike branch:** moves on selection, playhead and save/bounce, not only edits | n/a | P0-T06 (done, [spike-guarded-publish.md](spike-guarded-publish.md)); P1-E01 |
+| 5 | Undo and snapshots | Copy-on-write snapshots | Matches, plus gesture coalescing | **Measured on the spike branch:** grouped publish as one undo entry, all or nothing | Agree | P0-T06 (done); P1-E02 |
 | 6 | Batch commands | Sequential, `keep_going` | Sequential, no transaction | Unverified | Agree | P0-T06 (contrast with P1-E02) |
 | 7 | Local control | Loopback TCP; auth not mentioned | Loopback TCP; no auth check | Unverified | Agree | P0-T07 |
 | 8 | Audio to MIDI | "Pitch tracker" | YIN rounded to MIDI notes; no confidence | Unverified | Agree | P0-T08 |
@@ -108,7 +108,7 @@ A passing entry needs an evidence link and a date (PRD §15).
     process starts at 1 again. That's why an instance ID is needed (plan P1-E01).
   - `session.inspect` (`crates/ui-egui/src/control.rs:119`, `crates/engine/src/inspect.rs`) does
     not return it.
-- **Runtime-tested:** Unverified (P0-T06 audits the bump semantics).
+- **Runtime-tested (P0-T06, spike branch, 14 October 2026):** see [spike-guarded-publish.md](spike-guarded-publish.md). Measured: `edit.select`, `edit.select_none` and `transport.locate` move the revision; zoom and scroll do not. Save and bounce also move it (plugin state capture, source-inspected). A content-only counter was prototyped.
 
 ### 5. Undo and snapshots (S8)
 
@@ -123,7 +123,7 @@ A passing entry needs an evidence link and a date (PRD §15).
   - Tests: 2 unit tests in `lib.rs`; property tests in `crates/engine/tests/random_edits.rs`.
 - **Open for runtime (P0-T06):** state that lives outside `Session` (`transport_requests`, plugin
   instances in the player, the source pool) and how the renderer picks up a new `Arc<Session>`.
-- **Runtime-tested:** Unverified.
+- **Runtime-tested (P0-T06, spike branch):** grouped publication as one undo entry, all-or-nothing, including redo stack, journal, dirty flag, revision and queued transport requests (15 tests, mutation-checked). Still open: third-party plugin state and the packaged app.
 
 ### 6. Batch commands (S2, S3)
 
@@ -242,3 +242,4 @@ The PRD's source labels and the repository paths they point to at the pinned com
 |---|---|---|
 | 0.1 | 14 October 2026 | First source pass (P0-T02). All runtime columns unverified. |
 | 0.2 | 14 October 2026 | P0-T01 build record (partial) and P0-T03 runtime results for row 9. |
+| 0.3 | 14 October 2026 | P0-T06 runtime results for rows 4 and 5 (spike branch, inspection host). |
