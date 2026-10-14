@@ -9,6 +9,10 @@ fn p(r: Rect, x: f32, y: f32) -> Pos2 {
 
 /// Draw icon `name` inside `r` with colour `c`.
 pub fn draw(painter: &Painter, r: Rect, name: &str, c: Color32) {
+    // The design's icon set first; the procedural drawings below stay for names it does not have.
+    if crate::icon_set::draw(painter, r, name, c) {
+        return;
+    }
     let s = Stroke::new((r.width() / 14.0).clamp(1.2, 2.4), c);
     match name {
         "play" => {

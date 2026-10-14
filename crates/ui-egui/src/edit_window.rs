@@ -1,6 +1,6 @@
 //! The Edit window: toolbar, rulers, track headers and playlists.
 
-use crate::theme::{Tokens, bold, clip_colors, regular, rgb};
+use crate::theme::{Tokens, bold, clip_roles, medium, regular, rgb};
 use crate::widgets::{rec_toggle, selector_box, text_toggle};
 use crate::{Gesture, SoundApp, icons, toolbar};
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
@@ -809,7 +809,7 @@ fn track_header(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect, sele
     } else {
         track.name.clone()
     };
-    ui.painter().with_clip_rect(name_r).text(name_r.center(), Align2::CENTER_CENTER, &shown_name, bold(12.0), t.text_dark);
+    ui.painter().with_clip_rect(name_r).text(name_r.center(), Align2::CENTER_CENTER, &shown_name, bold(12.0), t.text);
     let nresp = ui.interact(name_r, ui.id().with(("name", id.0)), Sense::click_and_drag());
     if nresp.double_clicked() {
         app.dialogs.open_rename_track(id, &track.name);
@@ -1156,24 +1156,27 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
             && s.edit.selection.start <= clip.start
             && s.edit.selection.end >= clip.end());
     let color = clip.color.unwrap_or(track.color);
-    let (mut body, bar, mut wave) = clip_colors(color, selected);
+    let roles = clip_roles(color);
+    let (mut body, bar, mut wave, mut edge) = (roles.body, roles.header, roles.waveform, roles.border);
     if clip.muted || dim {
         body = body.gamma_multiply(0.45);
-        wave = Color32::from_rgb(70, 70, 70);
+        wave = Color32::from_rgb(110, 116, 124);
+        edge = edge.gamma_multiply(0.45);
     }
+    let t = Tokens::current();
     let body = if s.edit.flag("view.clip.transparency") { body.gamma_multiply(0.55) } else { body };
-    painter.rect(r, CornerRadius::same(2), body, Stroke::new(1.0, Color32::from_rgb(10, 10, 10)), StrokeKind::Inside);
-    let name_h = if lane.height() >= 40.0 && s.edit.flag("view.clip.name") { 13.0 } else { 0.0 };
+    painter.rect(r, CornerRadius::same(4), body, Stroke::new(1.0, edge), StrokeKind::Inside);
+    let name_h = if lane.height() >= 40.0 && s.edit.flag("view.clip.name") { 14.0 } else { 0.0 };
     if name_h > 0.0 {
         let nb = Rect::from_min_max(r.min, pos2(r.max.x, r.min.y + name_h));
-        painter.rect_filled(nb, CornerRadius { nw: 2, ne: 2, sw: 0, se: 0 }, if clip.muted { Color32::from_rgb(70, 70, 70) } else { bar });
+        painter.rect_filled(nb, CornerRadius { nw: 4, ne: 4, sw: 0, se: 0 }, if clip.muted { t.button } else { bar });
         let name_clip = nb.intersect(lane);
         painter.with_clip_rect(name_clip).text(
             pos2(nb.min.x.max(lane.min.x) + 4.0, nb.center().y),
             Align2::LEFT_CENTER,
             &clip.name,
-            bold(10.5),
-            Color32::from_rgb(12, 12, 12),
+            medium(11.0),
+            t.text,
         );
     }
     let body_r = Rect::from_min_max(pos2(r.min.x, r.min.y + name_h), r.max);
@@ -1360,6 +1363,10 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
     }
     if clip.edit_locked || clip.time_locked {
         painter.text(pos2(r.max.x - 10.0, r.min.y + 7.0), Align2::CENTER_CENTER, "🔒", regular(9.0), Color32::WHITE);
+    }
+    if selected {
+        // The design's selection: a 2 px accent outline over the clip.
+        painter.rect(r, CornerRadius::same(4), Color32::TRANSPARENT, Stroke::new(2.0, t.accent), StrokeKind::Inside);
     }
     let _ = app;
 }

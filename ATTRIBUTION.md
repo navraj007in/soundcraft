@@ -21,9 +21,12 @@ are bundled.
 
 ## Fonts
 
-SoundCraft bundles no font files. It uses the default fonts shipped inside the `egui` crate
-(Ubuntu-Light: Ubuntu Font Licence 1.0; Hack: MIT; Noto Emoji: OFL-1.1; emoji-icon-font: OFL-1.1/MIT)
-and, at runtime, the operating system's own UI fonts when available (never redistributed).
+The UI uses **IBM Plex Sans** (400, 500, 600) and **IBM Plex Mono** (400, 500), bundled unmodified in
+`crates/ui-egui/assets/fonts/ibm-plex/` under the SIL Open Font License 1.1 (copyright IBM Corp., Reserved
+Font Name "Plex"; the licence text and file hashes are in that folder). As fallbacks for glyphs Plex does
+not cover it uses the default fonts shipped inside the `egui` crate (Ubuntu-Light: Ubuntu Font Licence 1.0;
+Hack: MIT; Noto Emoji: OFL-1.1; emoji-icon-font: OFL-1.1/MIT) and, at runtime, the operating system's own UI
+fonts when available (never redistributed).
 
 ## Files
 
@@ -45,3 +48,9 @@ and, at runtime, the operating system's own UI fonts when available (never redis
 | `assets/app-icon/soundcraft.ico` | SoundCraft contributors | original, rendered from `icon.svg` | MIT OR Apache-2.0 |
 | `assets/app-icon/hicolor/` | SoundCraft contributors | original, rendered from `icon.svg` (16–512 px PNGs and the scalable SVG) | MIT OR Apache-2.0 |
 | `docs/images/` | SoundCraft contributors | screenshots of SoundCraft rendered from the synthesised demo session | MIT OR Apache-2.0 |
+| `crates/ui-egui/assets/fonts/ibm-plex/IBMPlexSans-Regular.ttf` | IBM Corp. | <https://github.com/IBM/plex> (`packages/plex-sans/fonts/complete/ttf`) | SIL OFL 1.1 |
+| `crates/ui-egui/assets/fonts/ibm-plex/IBMPlexSans-Medium.ttf` | IBM Corp. | <https://github.com/IBM/plex> (`packages/plex-sans/fonts/complete/ttf`) | SIL OFL 1.1 |
+| `crates/ui-egui/assets/fonts/ibm-plex/IBMPlexSans-SemiBold.ttf` | IBM Corp. | <https://github.com/IBM/plex> (`packages/plex-sans/fonts/complete/ttf`) | SIL OFL 1.1 |
+| `crates/ui-egui/assets/fonts/ibm-plex/IBMPlexMono-Regular.ttf` | IBM Corp. | <https://github.com/IBM/plex> (`packages/plex-mono/fonts/complete/ttf`) | SIL OFL 1.1 |
+| `crates/ui-egui/assets/fonts/ibm-plex/IBMPlexMono-Medium.ttf` | IBM Corp. | <https://github.com/IBM/plex> (`packages/plex-mono/fonts/complete/ttf`) | SIL OFL 1.1 |
+| `crates/ui-egui/assets/fonts/ibm-plex/OFL.txt` | IBM Corp. | <https://github.com/IBM/plex> (`LICENSE.txt`) | SIL OFL 1.1 (the licence text itself) |

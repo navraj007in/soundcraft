@@ -1,5 +1,6 @@
-//! Fonts: egui's bundled defaults, plus the operating system's own UI fonts loaded at runtime when
-//! present (never redistributed). A "bold" family is always defined so the UI can use it.
+//! Fonts: IBM Plex (bundled, SIL OFL 1.1) first, then egui's bundled defaults and the operating system's
+//! own UI font (loaded at runtime when present, never redistributed) as fallbacks for missing glyphs.
+//! The "medium", "bold" (Plex Sans SemiBold) and "mono-medium" families are always defined.
 
 use egui::{FontData, FontDefinitions, FontFamily};
 use std::sync::Arc;
@@ -14,16 +15,6 @@ const REGULAR: &[(&str, u32)] = &[
     ("/usr/share/fonts/dejavu/DejaVuSans.ttf", 0),
     ("/usr/local/share/fonts/dejavu/DejaVuSans.ttf", 0),
     ("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", 0),
-];
-const BOLD: &[(&str, u32)] = &[
-    ("/System/Library/Fonts/HelveticaNeue.ttc", 1),
-    ("/System/Library/Fonts/Helvetica.ttc", 1),
-    ("C:\\Windows\\Fonts\\segoeuib.ttf", 0),
-    ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 0),
-    ("/usr/share/fonts/TTF/DejaVuSans-Bold.ttf", 0),
-    ("/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf", 0),
-    ("/usr/local/share/fonts/dejavu/DejaVuSans-Bold.ttf", 0),
-    ("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", 0),
 ];
 
 /// Asks fontconfig for the desktop's UI font. Only TrueType/OpenType results are used: egui cannot
@@ -76,23 +67,45 @@ fn load(_: &[(&str, u32)], _: bool) -> Option<FontData> {
     None
 }
 
+/// IBM Plex (SIL OFL 1.1), bundled unmodified; see `assets/fonts/ibm-plex/`.
+const PLEX_SANS: &[u8] = include_bytes!("../assets/fonts/ibm-plex/IBMPlexSans-Regular.ttf");
+const PLEX_SANS_MEDIUM: &[u8] = include_bytes!("../assets/fonts/ibm-plex/IBMPlexSans-Medium.ttf");
+const PLEX_SANS_SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/ibm-plex/IBMPlexSans-SemiBold.ttf");
+const PLEX_MONO: &[u8] = include_bytes!("../assets/fonts/ibm-plex/IBMPlexMono-Regular.ttf");
+const PLEX_MONO_MEDIUM: &[u8] = include_bytes!("../assets/fonts/ibm-plex/IBMPlexMono-Medium.ttf");
+
+/// The family names the UI draws with (see `theme::{regular, medium, bold, mono, mono_medium}`).
+pub const MEDIUM: &str = "medium";
+pub const BOLD: &str = "bold";
+pub const MONO_MEDIUM: &str = "mono-medium";
+
+/// Plex is first in every family. egui's own fonts and the operating system's UI font follow as
+/// fallbacks for the glyphs Plex does not have (emoji, symbols, scripts it does not cover).
 pub fn definitions() -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
-    let base: Vec<String> = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
-    let mut bold_family = base.clone();
+    for (name, bytes) in [
+        ("plex-sans", PLEX_SANS),
+        ("plex-sans-medium", PLEX_SANS_MEDIUM),
+        ("plex-sans-semibold", PLEX_SANS_SEMIBOLD),
+        ("plex-mono", PLEX_MONO),
+        ("plex-mono-medium", PLEX_MONO_MEDIUM),
+    ] {
+        fonts.font_data.insert(name.into(), Arc::new(FontData::from_static(bytes)));
+    }
+    let proportional: Vec<String> = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
+    let monospace: Vec<String> = fonts.families.get(&FontFamily::Monospace).cloned().unwrap_or_default();
+    // An operating-system font, when there is one, goes after the bundled and egui fonts.
+    let mut fallback = proportional.clone();
     if let Some(reg) = load(REGULAR, false) {
         fonts.font_data.insert("system-regular".into(), Arc::new(reg));
-        if let Some(f) = fonts.families.get_mut(&FontFamily::Proportional) {
-            f.insert(0, "system-regular".into());
-        }
+        fallback.push("system-regular".into());
     }
-    if let Some(b) = load(BOLD, true) {
-        fonts.font_data.insert("system-bold".into(), Arc::new(b));
-        bold_family.insert(0, "system-bold".into());
-    } else if fonts.font_data.contains_key("system-regular") {
-        bold_family.insert(0, "system-regular".into());
-    }
-    fonts.families.insert(FontFamily::Name("bold".into()), bold_family);
+    let with = |first: &str, rest: &[String]| -> Vec<String> { std::iter::once(first.to_string()).chain(rest.iter().cloned()).collect() };
+    fonts.families.insert(FontFamily::Proportional, with("plex-sans", &fallback));
+    fonts.families.insert(FontFamily::Monospace, with("plex-mono", &monospace));
+    fonts.families.insert(FontFamily::Name(MEDIUM.into()), with("plex-sans-medium", &fallback));
+    fonts.families.insert(FontFamily::Name(BOLD.into()), with("plex-sans-semibold", &fallback));
+    fonts.families.insert(FontFamily::Name(MONO_MEDIUM.into()), with("plex-mono-medium", &monospace));
     fonts
 }
 

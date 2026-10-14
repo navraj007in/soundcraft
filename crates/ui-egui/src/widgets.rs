@@ -43,7 +43,7 @@ pub fn text_toggle(ui: &mut Ui, size: egui::Vec2, text: &str, on: bool, on_color
         t.button
     };
     ui.painter().rect(r, CornerRadius::same(2), fill, Stroke::new(1.0, t.button_border), StrokeKind::Inside);
-    let col = if on { t.text_dark } else { t.text };
+    let col = if on { t.text_on_fill } else { t.text };
     ui.painter().text(r.center(), Align2::CENTER_CENTER, text, bold((size.y * 0.62).clamp(8.0, 13.0)), col);
     resp.on_hover_text(tip)
 }

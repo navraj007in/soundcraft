@@ -1,0 +1,866 @@
+{
+ "source": "icons-data.js and the Round 6 icon board of the Claude Design bundle, extracted as data",
+ "spec": {
+  "grid_20": "20 x 20, padding 2 (live 16 x 16)",
+  "grid_16": "16 x 16, padding 2 (live 12 x 12)",
+  "stroke_px": 1,
+  "caps_and_joins": "round",
+  "group_transform": "translate(0.5 0.5) so a 1 px stroke lands on pixel centres",
+  "path_commands_needed": "M L H V A C S Z, absolute and relative (arcs are circular)",
+  "stroke_path_and_filled_path": "Each size has a stroke path (drawn with the stroke, no fill) and an optional filled path (drawn filled, as in record, record-arm, automation-write, overflow). Both are present in every state. The exported SVG files also embed a C2PA provenance block in <metadata>; it is not needed and is dropped here."
+ },
+ "icons": [
+  {
+   "name": "play",
+   "group": "transport",
+   "size_20": {
+    "stroke": "M6 4l10 6-10 6z",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M5 3l8 5-8 5z",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "stop",
+   "group": "transport",
+   "size_20": {
+    "stroke": "M5 5h10v10H5z",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M4 4h8v8H4z",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "pause",
+   "group": "transport",
+   "size_20": {
+    "stroke": "M7 4v12M13 4v12",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M6 3v10M10 3v10",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "record",
+   "group": "transport",
+   "size_20": {
+    "stroke": "M15 10a5 5 0 1 0-10 0a5 5 0 1 0 10 0z",
+    "fill": "M15 10a5 5 0 1 0-10 0a5 5 0 1 0 10 0z"
+   },
+   "size_16": {
+    "stroke": "M12 8a4 4 0 1 0-8 0a4 4 0 1 0 8 0z",
+    "fill": "M12 8a4 4 0 1 0-8 0a4 4 0 1 0 8 0z"
+   },
+   "note": ""
+  },
+  {
+   "name": "rewind",
+   "group": "transport",
+   "size_20": {
+    "stroke": "M10 5L4 10l6 5zM17 5l-6 5 6 5z",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M8 4L3 8l5 4zM13 4L8 8l5 4z",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "fast-forward",
+   "group": "transport",
+   "size_20": {
+    "stroke": "M10 5l6 5-6 5zM3 5l6 5-6 5z",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M8 4l5 4-5 4zM3 4l5 4-5 4z",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "to-start",
+   "group": "transport",
+   "size_20": {
+    "stroke": "M4 4v12M16 4l-8 6 8 6z",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M3 3v10M13 3L6 8l7 5z",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "loop",
+   "group": "transport",
+   "size_20": {
+    "stroke": "M4 9V8a3 3 0 013-3h8l-2-2M16 11v1a3 3 0 01-3 3H5l2 2",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M3 7V6a2 2 0 012-2h7M10 2l2 2-2 2M13 9v1a2 2 0 01-2 2H4M6 14l-2-2 2-2",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "zoom",
+   "group": "tool",
+   "size_20": {
+    "stroke": "M15 9a6 6 0 1 0-12 0a6 6 0 1 0 12 0zM13 13l4 4",
+    "fill": "M10.2 9a1.2 1.2 0 1 0-2.4 0a1.2 1.2 0 1 0 2.4 0z"
+   },
+   "size_16": {
+    "stroke": "M11 7a4 4 0 1 0-8 0a4 4 0 1 0 8 0zM10 10l3 3",
+    "fill": "M8 7a1 1 0 1 0-2 0a1 1 0 1 0 2 0z"
+   },
+   "note": ""
+  },
+  {
+   "name": "trim",
+   "group": "tool",
+   "size_20": {
+    "stroke": "M5 4v12M5 10h9M11 7l3 3-3 3",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M4 3v10M4 8h8M9 5l3 3-3 3",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "selector",
+   "group": "tool",
+   "size_20": {
+    "stroke": "M4 4h3M9 4h2M13 4h3M16 4v3M16 9v2M16 13v3M13 16h3M9 16h2M4 16h3M4 13v3M4 9v2M4 4v3",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M3 6V3h3M10 3h3v3M13 10v3h-3M6 13H3v-3",
+    "fill": ""
+   },
+   "note": "16 px draws four corners instead of a dashed outline"
+  },
+  {
+   "name": "grabber",
+   "group": "tool",
+   "size_20": {
+    "stroke": "M10 3v14M3 10h14M10 3l-2 2M10 3l2 2M10 17l-2-2M10 17l2-2M3 10l2-2M3 10l2 2M17 10l-2-2M17 10l-2 2",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M8 2v12M2 8h12M8 2L6 4M8 2l2 2M8 14l-2-2M8 14l2-2M2 8l2-2M2 8l2 2M14 8l-2-2M14 8l-2 2",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "scrubber",
+   "group": "tool",
+   "size_20": {
+    "stroke": "M10 3v14M7 3h6M3 11c1-3 2-3 3.5 0M13.5 11c1.2-3 2.3-3 3.5 0",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M8 2v12M5 2h6M3 10c1-2 2-2 3 0M10 10c1-2 2-2 3 0",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "pencil",
+   "group": "tool",
+   "size_20": {
+    "stroke": "M4 16l1-4 8-8 3 3-8 8zM11 6l3 3",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M3 13l1-3 7-7 2 2-7 7zM9 5l2 2",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "smart-tool",
+   "group": "tool",
+   "size_20": {
+    "stroke": "M4 3l9 7-4 1 2.5 5-2 1-2.5-5-3.5 3zM18 15a2.5 2.5 0 1 0-5 0a2.5 2.5 0 1 0 5 0z",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M3 2l7 5.5-3 1 2 4-1.5 1-2-4-2.5 2.5zM14 12a2 2 0 1 0-4 0a2 2 0 1 0 4 0z",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "shuffle",
+   "group": "mode",
+   "size_20": {
+    "stroke": "M3 6h3l8 8h3M3 14h3l2-2M12 8l2-2h3M15 4l2 2-2 2M15 12l2 2-2 2",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M2 5h2l6 6h3M2 11h2l1-1M9 6l1-1h3M12 3l2 2-2 2M12 9l2 2-2 2",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "spot",
+   "group": "mode",
+   "size_20": {
+    "stroke": "M14 10a4 4 0 1 0-8 0a4 4 0 1 0 8 0zM10 2v3M10 15v3M2 10h3M15 10h3",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M11 8a3 3 0 1 0-6 0a3 3 0 1 0 6 0zM8 2v2M8 12v2M2 8h2M12 8h2",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "slip",
+   "group": "mode",
+   "size_20": {
+    "stroke": "M4 10h12M7 7l-3 3 3 3M13 7l3 3-3 3",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M3 8h10M5 6L3 8l2 2M11 6l2 2-2 2",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "grid",
+   "group": "mode",
+   "size_20": {
+    "stroke": "M4 4h12v12H4zM8 4v12M12 4v12M4 8h12M4 12h12",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M3 3h10v10H3zM8 3v10M3 8h10",
+    "fill": ""
+   },
+   "note": "16 px: 2 × 2 cells, 20 px: 4 × 4"
+  },
+  {
+   "name": "zoom-in",
+   "group": "view",
+   "size_20": {
+    "stroke": "M15 9a6 6 0 1 0-12 0a6 6 0 1 0 12 0zM13 13l4 4M6 9h6M9 6v6",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M11 7a4 4 0 1 0-8 0a4 4 0 1 0 8 0zM10 10l3 3M5 7h4M7 5v4",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "zoom-out",
+   "group": "view",
+   "size_20": {
+    "stroke": "M15 9a6 6 0 1 0-12 0a6 6 0 1 0 12 0zM13 13l4 4M6 9h6",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M11 7a4 4 0 1 0-8 0a4 4 0 1 0 8 0zM10 10l3 3M5 7h4",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "zoom-selection",
+   "group": "view",
+   "size_20": {
+    "stroke": "M15 9a6 6 0 1 0-12 0a6 6 0 1 0 12 0zM13 13l4 4M7 7h4v4H7z",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M11 7a4 4 0 1 0-8 0a4 4 0 1 0 8 0zM10 10l3 3M5 5h4v4H5z",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "waveform-view",
+   "group": "view",
+   "size_20": {
+    "stroke": "M3 10h1M6 7v6M9 4v12M12 7v6M15 9v2",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M3 7v2M6 5v6M9 3v10M12 6v4",
+    "fill": ""
+   },
+   "note": "16 px has 4 bars, 20 px has 5"
+  },
+  {
+   "name": "notes-view",
+   "group": "view",
+   "size_20": {
+    "stroke": "M3 6h6M7 10h8M5 14h6",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M3 5h5M6 8h7M4 11h5",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "record-arm",
+   "group": "track",
+   "size_20": {
+    "stroke": "M16 10a6 6 0 1 0-12 0a6 6 0 1 0 12 0z",
+    "fill": "M12 10a2 2 0 1 0-4 0a2 2 0 1 0 4 0z"
+   },
+   "size_16": {
+    "stroke": "M12 8a4 4 0 1 0-8 0a4 4 0 1 0 8 0z",
+    "fill": ""
+   },
+   "note": "16 px drops the inner dot"
+  },
+  {
+   "name": "monitor",
+   "group": "track",
+   "size_20": {
+    "stroke": "M4 13V10a6 6 0 0112 0v3M3 12h3v5H3zM14 12h3v5h-3z",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M3 11V8a5 5 0 0110 0v3M2 10h2v4H2zM12 10h2v4h-2z",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "solo",
+   "group": "track",
+   "size_20": {
+    "stroke": "M13.5 6.5C13 5 11.8 4.5 10 4.5S6.5 5.5 6.5 7 8 9.3 10 10s3.5 1.7 3.5 3.3S12 15.5 10 15.5s-3-.5-3.5-2",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M11 5C10 3.8 9 4 8 4S5 4.6 5 6s1 1.5 3 2 3 .5 3 2-1 2-3 2-2-.4-3-1.6",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "mute",
+   "group": "track",
+   "size_20": {
+    "stroke": "M3 8h3l4-3.5v11L6 12H3zM13.5 7.5l4 5M17.5 7.5l-4 5",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M2 6h3l3-3v10l-3-3H2zM10 6l4 4M14 6l-4 4",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "bypass",
+   "group": "track",
+   "size_20": {
+    "stroke": "M10 3v6M5.5 5.5a6 6 0 109 0",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M8 2v5M4 4a5 5 0 108 0",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "insert",
+   "group": "track",
+   "size_20": {
+    "stroke": "M4 4h12v12H4zM10 7v6M7 10h6",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M3 3h10v10H3zM8 5v6M5 8h6",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "send",
+   "group": "track",
+   "size_20": {
+    "stroke": "M3 10h11M10 5.5l4.5 4.5-4.5 4.5M17 4v12",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M2 8h8M7 5l3 3-3 3M13 3v10",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "automation-read",
+   "group": "track",
+   "size_20": {
+    "stroke": "M3 6c2-4 3-4 5 0s3 4 5 0M11 12l6 2.5-6 2.5z",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M2 4c2-3 3-3 5 0s3 3 5 0M9 9l4 2-4 2z",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "automation-write",
+   "group": "track",
+   "size_20": {
+    "stroke": "M3 6c2-4 3-4 5 0s3 4 5 0",
+    "fill": "M17 14.5a3 3 0 1 0-6 0a3 3 0 1 0 6 0z"
+   },
+   "size_16": {
+    "stroke": "M2 4c2-3 3-3 5 0s3 3 5 0",
+    "fill": "M13 11a2 2 0 1 0-4 0a2 2 0 1 0 4 0z"
+   },
+   "note": ""
+  },
+  {
+   "name": "automation-touch",
+   "group": "track",
+   "size_20": {
+    "stroke": "M3 6c2-4 3-4 5 0s3 4 5 0M17 14.5a3 3 0 1 0-6 0a3 3 0 1 0 6 0z",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M2 4c2-3 3-3 5 0s3 3 5 0M13 11a2 2 0 1 0-4 0a2 2 0 1 0 4 0z",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "automation-latch",
+   "group": "track",
+   "size_20": {
+    "stroke": "M3 6c2-4 3-4 5 0s3 4 5 0M17 14.5a3 3 0 1 0-6 0a3 3 0 1 0 6 0zM14 11v7",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M2 4c2-3 3-3 5 0s3 3 5 0M13 11a2 2 0 1 0-4 0a2 2 0 1 0 4 0zM11 8v6",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "lock",
+   "group": "track",
+   "size_20": {
+    "stroke": "M5 9h10v7H5zM7 9V7a3 3 0 016 0v2",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M3 7h10v6H3zM5 7V5a3 3 0 016 0v2",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "hidden",
+   "group": "track",
+   "size_20": {
+    "stroke": "M2.5 10S5.5 5 10 5s7.5 5 7.5 5-3 5-7.5 5S2.5 10 2.5 10zM3.5 16.5l13-13",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M2 8s2-4 6-4 6 4 6 4-2 4-6 4-6-4-6-4zM3 13L13 3",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "folder",
+   "group": "track",
+   "size_20": {
+    "stroke": "M3 6a1 1 0 011-1h4l2 2h6a1 1 0 011 1v7a1 1 0 01-1 1H4a1 1 0 01-1-1z",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M2 5a1 1 0 011-1h3l2 2h5a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1z",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "inactive",
+   "group": "track",
+   "size_20": {
+    "stroke": "M17 10a7 7 0 1 0-14 0a7 7 0 1 0 14 0zM5 15L15 5",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M13 8a5 5 0 1 0-10 0a5 5 0 1 0 10 0zM4 12L12 4",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "instrument",
+   "group": "track",
+   "size_20": {
+    "stroke": "M3 6h14v9H3zM7 6v5M10 6v5M13 6v5",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M2 4h12v8H2zM5 4v4M8 4v4M11 4v4",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "aux",
+   "group": "track",
+   "size_20": {
+    "stroke": "M4 5v6h10M11 8l3 3-3 3",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M3 4v5h8M9 6l2 3-2 3",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "assistant",
+   "group": "product",
+   "size_20": {
+    "stroke": "M4 4h12v9H9l-4 3.5V13H4zM7 8h6M7 11h3",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M3 3h10v7H8l-3 3v-3H3z",
+    "fill": ""
+   },
+   "note": "16 px drops the two text lines"
+  },
+  {
+   "name": "vocal-pitch",
+   "group": "product",
+   "size_20": {
+    "stroke": "M3 14C5 8 7 8 9 11s5 2 8-6",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M2 11c1.5-6 3-6 4.5-2s3.5 2 7-4",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "audition-ab",
+   "group": "product",
+   "size_20": {
+    "stroke": "M3 15l3.5-10 3.5 10M5 11h3M13 5v10h2.5a2.5 2.5 0 000-5H13M13 10h2a2.5 2.5 0 000-5H13",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M2 13l3-9 3 9M3 10h4M10 3v10M10 3h1a2 2 0 010 4h-1M10 7h1a3 3 0 010 6h-1",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "keep",
+   "group": "product",
+   "size_20": {
+    "stroke": "M4 10.5l4 4 8-9",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M3 8l3 3 7-7",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "discard",
+   "group": "product",
+   "size_20": {
+    "stroke": "M5 5l10 10M15 5L5 15",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M4 4l8 8M12 4L4 12",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "reject",
+   "group": "product",
+   "size_20": {
+    "stroke": "M4 4h12v12H4zM7 7l6 6M13 7l-6 6",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M3 3h10v10H3zM6 6l4 4M10 6l-4 4",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "undo",
+   "group": "product",
+   "size_20": {
+    "stroke": "M7 4L3.5 7.5 7 11M4 7.5h7a4.5 4.5 0 010 9H8",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M6 3L3 6l3 3M3 6h6a3 3 0 010 7H7",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "redo",
+   "group": "product",
+   "size_20": {
+    "stroke": "M13 4l3.5 3.5L13 11M16 7.5H9a4.5 4.5 0 000 9h3",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M10 3l3 3-3 3M13 6H7a3 3 0 000 7h2",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "preview",
+   "group": "product",
+   "size_20": {
+    "stroke": "M3 5h14v10H3zM8.5 7.5l4 2.5-4 2.5z",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M2 4h12v8H2zM7 6l3 2-3 2",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "stale",
+   "group": "product",
+   "size_20": {
+    "stroke": "M17 10a7 7 0 1 0-14 0a7 7 0 1 0 14 0zM10 6v4l3 2",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M13 8a5 5 0 1 0-10 0a5 5 0 1 0 10 0zM8 5v3l2 1",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "recovery",
+   "group": "product",
+   "size_20": {
+    "stroke": "M4 10a6 6 0 1 1 2 4.5M4 15v-4h4",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M3 8a5 5 0 1 1 1.5 3.5M3 12V9h3",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "warning",
+   "group": "status",
+   "size_20": {
+    "stroke": "M10 3.5l7.5 13h-15zM10 8v4M10 14v1",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M8 2l6 11H2zM8 6v3M8 11v1",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "error",
+   "group": "status",
+   "size_20": {
+    "stroke": "M17 10a7 7 0 1 0-14 0a7 7 0 1 0 14 0zM7.5 7.5l5 5M12.5 7.5l-5 5",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M13 8a5 5 0 1 0-10 0a5 5 0 1 0 10 0zM6 6l4 4M10 6l-4 4",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "info",
+   "group": "status",
+   "size_20": {
+    "stroke": "M17 10a7 7 0 1 0-14 0a7 7 0 1 0 14 0zM10 9v5M10 6v1",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M13 8a5 5 0 1 0-10 0a5 5 0 1 0 10 0zM8 7v4M8 5v1",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "success",
+   "group": "status",
+   "size_20": {
+    "stroke": "M17 10a7 7 0 1 0-14 0a7 7 0 1 0 14 0zM6.8 10.2l2.2 2.3 4.2-4.7",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M13 8a5 5 0 1 0-10 0a5 5 0 1 0 10 0zM5 8l2 2 4-4",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "cancel",
+   "group": "status",
+   "size_20": {
+    "stroke": "M17 10a7 7 0 1 0-14 0a7 7 0 1 0 14 0zM8 8h4v4H8z",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M13 8a5 5 0 1 0-10 0a5 5 0 1 0 10 0zM6 6h4v4H6z",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "settings",
+   "group": "status",
+   "size_20": {
+    "stroke": "M3 6h8M15 6h2M3 14h2M9 14h8M15 6a2 2 0 1 0-4 0a2 2 0 1 0 4 0zM9 14a2 2 0 1 0-4 0a2 2 0 1 0 4 0z",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M2 5h6M12 5h2M2 11h2M8 11h6M12 5a2 2 0 1 0-4 0a2 2 0 1 0 4 0zM8 11a2 2 0 1 0-4 0a2 2 0 1 0 4 0z",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "search",
+   "group": "status",
+   "size_20": {
+    "stroke": "M15 9a6 6 0 1 0-12 0a6 6 0 1 0 12 0zM13 13l4 4",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M11 7a4 4 0 1 0-8 0a4 4 0 1 0 8 0zM10 10l3 3",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "close",
+   "group": "status",
+   "size_20": {
+    "stroke": "M6 6l8 8M14 6l-8 8",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M4 4l8 8M12 4L4 12",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "overflow",
+   "group": "status",
+   "size_20": {
+    "stroke": "M0 0",
+    "fill": "M6 10a1 1 0 1 0-2 0a1 1 0 1 0 2 0zM11 10a1 1 0 1 0-2 0a1 1 0 1 0 2 0zM16 10a1 1 0 1 0-2 0a1 1 0 1 0 2 0z"
+   },
+   "size_16": {
+    "stroke": "M0 0",
+    "fill": "M5 8a1 1 0 1 0-2 0a1 1 0 1 0 2 0zM9 8a1 1 0 1 0-2 0a1 1 0 1 0 2 0zM13 8a1 1 0 1 0-2 0a1 1 0 1 0 2 0z"
+   },
+   "note": ""
+  },
+  {
+   "name": "disclosure-closed",
+   "group": "status",
+   "size_20": {
+    "stroke": "M8 5l5 5-5 5",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M6 3l5 5-5 5",
+    "fill": ""
+   },
+   "note": ""
+  },
+  {
+   "name": "disclosure-open",
+   "group": "status",
+   "size_20": {
+    "stroke": "M5 8l5 5 5-5",
+    "fill": ""
+   },
+   "size_16": {
+    "stroke": "M3 6l5 5 5-5",
+    "fill": ""
+   },
+   "note": ""
+  }
+ ],
+ "imitation_notes": [
+  {
+   "icons": "automation-read",
+   "idea": "A wave line is the curve; the small forward triangle under it says it plays back.",
+   "convention": "A curve for automation is common. The triangle is the generic play shape."
+  },
+  {
+   "icons": "automation-write",
+   "idea": "The same wave with a solid dot: the dot says it records into the curve.",
+   "convention": "Dot for record is generic. The wave and dot pairing is not a standard."
+  },
+  {
+   "icons": "automation-touch",
+   "idea": "The wave with an open ring: a contact that exists only while you hold a control.",
+   "convention": "None known."
+  },
+  {
+   "icons": "automation-latch",
+   "idea": "The wave with a ring crossed by a bar: the value is held after you let go.",
+   "convention": "None known."
+  },
+  {
+   "icons": "selector",
+   "idea": "A rectangle whose four corners are marked: a region you mark out.",
+   "convention": "A dashed or cornered marquee is the common selection symbol."
+  },
+  {
+   "icons": "zoom, zoom-in, zoom-out, zoom-selection, search",
+   "idea": "A round lens with a handle; a bar, plus, small box or a centre dot inside says which zoom it is.",
+   "convention": "The magnifier with plus and minus is near universal."
+  }
+ ],
+ "conventional_shapes": "play, stop, pause, record, rewind, fast-forward, to-start and loop (generic transport shapes); lock (padlock); folder; hidden (eye with a slash); undo and redo (curved arrows); warning (triangle), info (circle with i), error (circle with x), success (circle with check); close; overflow (three dots); disclosure arrows; mute (speaker with x); monitor (headphones); bypass (power symbol); grabber (four-way arrows); pencil; assistant (speech bubble); settings (sliders)."
+}

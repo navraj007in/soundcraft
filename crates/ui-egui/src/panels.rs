@@ -69,7 +69,7 @@ pub fn tracks_and_groups(app: &mut SoundApp, ui: &mut Ui) {
                 Align2::CENTER_CENTER,
                 letter.to_string(),
                 bold(10.0),
-                if active { t.text_dark } else { t.text_dim },
+                if active { t.text_on_fill } else { t.text_dim },
             );
             ui.painter().text(pos2(r.min.x + 30.0, r.center().y), Align2::LEFT_CENTER, &name, regular(11.5), t.text);
             if resp.clicked() {

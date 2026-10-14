@@ -401,7 +401,7 @@ fn strip(app: &mut SoundApp, ui: &mut Ui, id: TrackId, snap: Option<&MeterSnapsh
         Stroke::new(1.0, Color32::BLACK),
         StrokeKind::Inside,
     );
-    ui.painter().with_clip_rect(nr).text(nr.center(), Align2::CENTER_CENTER, &track.name, bold(12.0), t.text_dark);
+    ui.painter().with_clip_rect(nr).text(nr.center(), Align2::CENTER_CENTER, &track.name, bold(12.0), t.text);
     let nresp = ui.interact(nr, ui.id().with(("strip_name", id.0)), Sense::click());
     if nresp.clicked() {
         crate::edit_window::click_track(app, id, ui.input(|i| i.modifiers), |_, t| !t.hidden && t.kind != TrackKind::Video);
