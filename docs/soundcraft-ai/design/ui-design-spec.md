@@ -2,6 +2,7 @@
 
 **Version:** 0.1 · **Date:** 14 October 2026 · **Status:** Design received and reviewed; **not yet implemented.**
 **Source:** the Claude Design bundle "Arrange Window Design Round 1" (rounds 1 to 5), made from [ui-design-brief.md](../ui-design-brief.md).
+**Decisions that override the bundle:** [decisions.md](decisions.md).
 **Machine-readable:** [tokens.json](tokens.json) (colours, type, sizes, palette, redlines) and [copy.json](copy.json) (interaction notes and exact wording). Both are generated from the bundle as data by `tools/design/extract_design.py`; nothing in the bundle is executed.
 
 ## 1. What this is, and what is not in the repository
@@ -188,6 +189,8 @@ Role names (body, header, waveform, border) are inferred from the design's varia
 
 ## 6. Interaction notes
 
+**The Change review row below is overridden by decision UI-1 in [decisions.md](decisions.md)** (a production proposal has Preview and Reject only; Approve is for explicit assignments). The rest is as designed.
+
 | Component | Click, hover, keyboard | Disabled or unavailable |
 |---|---|---|
 | Button | Hover raises the gradient 8%. Press inverts it for 40 ms. Enter or Space activates. Focus shows a 2 px accent ring. | Dimmed to 70%. Hover shows a tooltip that says why, for example “Select a range first”. |
@@ -232,7 +235,7 @@ Numbers in the strings (levels, times, loudness differences, the rule version) a
 
 ## 9. Issues to settle before building
 
-1. **Two approvals for one change.** The change review offers Preview, Approve and Reject; the audition then offers "Keep this change". PRD v0.3 section 5.2 makes **Keep in the audition the approval action for production proposals**, and allows approval from the change list **only for simple supported edits** without a render. As drawn, a user would approve twice. Proposal: for production proposals the change review offers only Preview (and Reject), and Keep in the audition is the approval; Approve appears only for simple edits.
+1. **Two approvals for one change: decided.** The design had Preview, Approve and Reject in the change review and then "Keep this change" in the audition. PRD v0.3 section 5.2 makes **Keep in the audition the approval for production proposals** and allows approval from the change list only for simple supported edits. Decision UI-1 in [decisions.md](decisions.md): production proposals have **Preview and Reject only**, explicit assignments have **Approve and Reject**, and the controller sets the path. Where this differs from the bundle's strings, decisions.md wins.
 2. **Placeholder rule version.** The copy says "version 1.2"; the headroom rule is `level.headroom` 0.1.0. The string must be filled from the rule at build time.
 3. **The microcopy has no wording for the policy's other results** (stale analysis, role not confirmed, automation conflict, too little signal, near-silence, fader limits). The policy returns a code for each ([production-policy.md](../production-policy.md)); each needs a plain-language message in the same style. Ask the design tool for them or write them to the same rules.
 4. **Dense hit targets.** The dense sizes (22 × 18 track buttons) are smaller than egui's default hit targets; they need explicit sizing and a check that they remain operable.
