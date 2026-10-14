@@ -1,7 +1,7 @@
 # SoundCraft-AI execution plan
 
 **Implements:** [SoundCraft-AI Product Requirements v0.3](../../SoundCraft_AI_PRD_v0.3.docx) (14 October 2026)
-**Plan version:** 0.7 · **Updated:** 14 October 2026 · **Status:** Draft. Phase 0 has not started.
+**Plan version:** 0.8 · **Updated:** 14 October 2026 · **Status:** Draft. Phase 0 has not started.
 **Baseline:** fork `navraj007in/soundcraft`, `main` at `6cf896e` (the PRD's pinned 0.6.1 rebuild).
 
 This plan breaks the PRD into phases, work packages and tasks, and ties each one to the
@@ -139,7 +139,7 @@ investigation list now rather than overrunning.
 | P0-T09 | Initial production rule fixtures | Define the rule schema: required measurements, applicability, uncertainty checks, allowed processors, bounds, maximum change, abstention. Write one rule set (headroom/level) with fixtures. | `policy/v0` plus fixtures | G08 |
 | P0-T10 | Packaging and dependencies | Worker language/runtime options, model checksums and licences, resident memory against the 2 GiB budget, cold-load time against 20 s. | Licence inventory draft; runtime recommendation | G10, G13 |
 
-**Recommendation for P0-T10 (to confirm by measurement):** write the companion in **Rust**. It
+**Result of P0-T10 ([packaging-and-dependencies.md](packaging-and-dependencies.md)):** the companion is written in **Rust**. It
 reuses `soundcraft-dsp` and `audio-io` directly, has no Python environment to package (PRD §10.3),
 and fits the never-crash tooling. Add an ONNX runtime only if P0-T08 picks a neural F0 model.
 
@@ -177,7 +177,7 @@ the smallest admitted operation set. Section 7 protections apply from the first 
 | P1-E04 | Capability manifest | Generated from command specs and processor parameter tables for the admitted set: command ID, parameter units, ranges, defaults, processor version, reversibility. Starts as `mix.volume` and `track.rename` only; grows per phase. | FR-02 / G03, G04 |
 | P1-E05 | Automation conflict check | Block a static parameter proposal when automation on that parameter would override it, and explain why. | FR-02 / G03 |
 | P1-E06 | Strict operation validation and scope diff | Native mixer commands are not isolated (§1): `set_grouped` changes active group members, exclusive solo clears other solos, and a missing `track` falls back to the selection. (a) **Strict parameters** for each admitted operation: an explicit `track` ID is required, a missing or unknown ID is an error (never a selection fallback), `exclusive` is forced to false, and unknown keys are rejected. (b) **Scope diff**: after staging, compare the staged session with `before` field by field. Any change outside the approved target IDs and attributes rejects the whole group with an explanation, and nothing is published. (c) In Phase 1, an operation whose diff reaches active group members is rejected and the conflict explained; whether to support group-aware scope is decision D8. Tests: grouped tracks (volume, mute, solo), exclusive solo with `solo_mode` set to `xor`, missing and unknown IDs, no `track` param with an active selection, and a changed selection between review and publish. | FR-02 / G03, G04 |
-| P1-E07 | Compressed-import repairs | From P0-T03 ([import-matrix.md](import-matrix.md)). (a) Honour the MP4 edit list and iTunSMPB so AAC-LC M4A imports with onset error ≤ 1 sample against the ffmpeg reference on the `afconvert` and ffmpeg fixtures at 44.1 and 48 kHz, mono and stereo; first check whether a symphonia update or a small local patch is simpler. (b) Keep the original compressed file's name, size and content hash in the session's source entry or the sidecar, so a source imported from MP3 or AAC still has its identity after the decoded PCM replaces it on save (PRD §4.2). (c) Report which gapless case applied (declared, untagged or unknown) in the import result. (d) Regression tests from the fixture generator, plus onset measurement after bounce on the timeline. | FR-11 / G01 |
+| P1-E07 | Compressed-import repairs | From P0-T03 ([import-matrix.md](import-matrix.md)). (a) Honour the MP4 edit list and iTunSMPB so AAC-LC M4A imports with onset error ≤ 1 sample against the ffmpeg reference on the `afconvert` and ffmpeg fixtures at 44.1 and 48 kHz, mono and stereo. Prefer reading the gapless data in `soundcraft-audio-io` and trimming after decode; symphonia's files are MPL-2.0, so a patch to them would have to be published (decision D10). (b) Keep the original compressed file's name, size and content hash in the session's source entry or the sidecar, so a source imported from MP3 or AAC still has its identity after the decoded PCM replaces it on save (PRD §4.2). (c) Report which gapless case applied (declared, untagged or unknown) in the import result. (d) Regression tests from the fixture generator, plus onset measurement after bounce on the timeline. | FR-11 / G01 |
 
 ### 5.2 Contracts and controller (companion)
 
@@ -291,8 +291,8 @@ integrity defect. Condition-specific pitch failures and rejected processing resu
 | P3-R07 | *(Optional)* software monitoring | Measured input-to-output latency ≤ 15 ms on each advertised configuration. Advertise it only if it passes. | G02-SW |
 | P3-F01 | Performance | 8-track workload, 30 minutes, zero dropouts with background work allowed. Callback p99 below 80% of its deadline and within 5% of baseline. Heavy jobs suspend while recording. UI p95 ≤ 200 ms. 60 s pitch job ≤ 30 s and 60 s render ≤ 60 s at p95. Companion and worker memory ≤ 2 GiB. | FR-13 / G10 |
 | P3-P01 | Privacy and degradation | Offline run with zero app-originated requests. Captured payloads match the disclosed categories. Logs exclude credentials and raw audio. Opt-in, previewable crash reports. Users can delete chat and analysis data. Provider failure leaves manual use working. | FR-13 / G12 |
-| P3-D01 | Packaging | Signed and notarised macOS (Apple Silicon) package bundling the companion and models. Installs on the declared OS and interface matrix. | G13 |
-| P3-D02 | Licence inventory | Source, dependencies, model weights, evaluation recordings, bundled assets; commercial redistribution checked if commercial distribution is chosen. | G13 |
+| P3-D01 | Packaging | Signed and notarised macOS (Apple Silicon) package bundling the companion and models, per the changes listed in [packaging-and-dependencies.md](packaging-and-dependencies.md) §5 (companion signed before the app, no new entitlements, models and notices under `Resources/`). Installs on the declared OS and interface matrix. | G13 |
+| P3-D02 | Licence inventory | Start from the P0-T10 inventory ([packaging-and-dependencies.md](packaging-and-dependencies.md)): 223 external packages in the macOS app, 16 of them MPL-2.0 (symphonia). Add: model weights and their training-data terms (none verified yet), evaluation recordings, bundled assets, the OFL and Ubuntu font notices, the `self_cell` licence choice, `cargo-deny` in CI, and a legal check of MP3/AAC codec patents. Commercial redistribution checked if commercial distribution is chosen. | G13 |
 | P3-D03 | Branding | Remove the ArtCraft branding as upstream requires for modified forks. Apply the final product name after review. | G13 |
 | P3-D04 | Release documentation | Supported workflow, hardware and OS versions, monitoring mode, known limitations, privacy behaviour, who pays for inference, recovery instructions. No unqualified feature described as available. | G13 |
 
@@ -345,7 +345,7 @@ versioned scope change is approved.
 
 | # | Decision | Default in this plan | Resolved by | When |
 |---|---|---|---|---|
-| D1 | Companion language and runtime | Rust; add ONNX only if a neural F0 model wins | P0-T08, P0-T10 | Phase 0 exit |
+| D1 | Companion language and runtime | **Resolved by P0-T10: Rust**, see [packaging-and-dependencies.md](packaging-and-dependencies.md). ONNX engine if a neural model is chosen: `tract` first (pure Rust, no library to bundle) | P0-T10 (done) | Closed |
 | D2 | F0 tracker | Chosen by benchmark; YIN is the baseline | P0-T08 | Phase 0 exit |
 | D3 | Reference audio interface | One named interface, to be chosen | P0-T05 | Week 1 |
 | D4 | Cloud text-model provider | One replaceable adapter; terms, rates and intent reliability checked | P1-M03, P1-M04 | Phase 1 |
@@ -354,6 +354,7 @@ versioned scope change is approved.
 | D7 | Product name | "SoundCraft-AI" working name | Branding review | Before P3-D03 |
 | D8 | Grouped tracks in assistant edits | Phase 1 rejects any operation whose scope diff reaches active group members, and explains why. Later options: list group members as explicit targets in review, or add an engine parameter that suspends group propagation for one call | P1-E06 findings; G00/G11 feedback | Phase 2 |
 | D9 | Untagged MP3 delay | Don't guess: import as decoded (+1104 samples) and report "no gapless information" in the import result. Alternative: apply the standard 1105-sample LAME delay by default | P0-T03 finding; user feedback | Phase 1 (with P1-E07) |
+| D10 | How to fix the AAC start trim without modifying symphonia (16 MPL-2.0 crates: modified files must be published) | Read the container's gapless data (edit list, iTunSMPB) in `soundcraft-audio-io` and trim after decode, leaving symphonia unmodified. A symphonia patch is the fallback, with the changed files published under MPL-2.0 and listed in the notices | P1-E07; [packaging-and-dependencies.md](packaging-and-dependencies.md) §3 | Phase 1 |
 
 ## 10. Risks and triggers
 
@@ -382,3 +383,4 @@ versioned scope change is approved.
 | 0.5 | 14 October 2026 | P0-T06 spike results: the raw revision moves on selection and playhead changes, so staleness uses a content revision (P1-E01, P1-E02); D5 closed; guarded group publication shown to work on the existing history; findings in `spike-guarded-publish.md`. |
 | 0.6 | 14 October 2026 | P0-T07: control channel protection designed and tested (`control-channel-protection.md`); the browser-to-loopback attack is demonstrated; P1-E03 now names the design, the 7 ignored tests and an estimate. |
 | 0.7 | 14 October 2026 | P0-T09: production policy rule format and `level.headroom` 0.1.0 with 44 fixtures and property tests (`production-policy.md`); a bounds-clamp defect found by the property tests and fixed; P1-M01 and P1-A02 point at it; the new crate is listed in the code-location table. |
+| 0.8 | 14 October 2026 | P0-T10: companion language decided (Rust, D1 closed); resource measurements (YIN over 60 s: 2.8 s and 48 MiB; the 8 × 10 min stereo envelope: about 2.0 to 2.3 GiB in the engine process); licence inventory (symphonia is MPL-2.0, so D10); model and runtime options with code licences read from the repositories; packaging plan. Findings in `packaging-and-dependencies.md`. |
