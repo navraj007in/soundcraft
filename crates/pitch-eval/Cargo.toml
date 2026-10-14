@@ -1,0 +1,25 @@
+[package]
+name = "soundcraft-pitch-eval"
+description = "SoundCraft-AI pitch evaluation harness: scores an F0 tracker against annotated vocal excerpts as PRD v0.3 section 12.2 defines"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[lib]
+name = "soundcraft_pitch_eval"
+path = "src/lib.rs"
+
+[[bin]]
+name = "soundcraft-pitch-eval"
+path = "src/main.rs"
+
+[dependencies]
+soundcraft-dsp.workspace = true
+soundcraft-audio-io.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

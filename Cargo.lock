@@ -3578,6 +3578,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "soundcraft-pitch-eval"
+version = "0.6.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "soundcraft-audio-io",
+ "soundcraft-dsp",
+]
+
+[[package]]
 name = "soundcraft-playback"
 version = "0.6.1"
 dependencies = [
