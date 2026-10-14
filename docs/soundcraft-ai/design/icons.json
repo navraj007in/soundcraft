@@ -118,14 +118,14 @@
    "name": "zoom",
    "group": "tool",
    "size_20": {
-    "stroke": "M15 9a6 6 0 1 0-12 0a6 6 0 1 0 12 0zM13 13l4 4M7 9h4",
-    "fill": ""
+    "stroke": "M15 9a6 6 0 1 0-12 0a6 6 0 1 0 12 0zM13 13l4 4",
+    "fill": "M10.2 9a1.2 1.2 0 1 0-2.4 0a1.2 1.2 0 1 0 2.4 0z"
    },
    "size_16": {
     "stroke": "M11 7a4 4 0 1 0-8 0a4 4 0 1 0 8 0zM10 10l3 3",
-    "fill": ""
+    "fill": "M8 7a1 1 0 1 0-2 0a1 1 0 1 0 2 0z"
    },
-   "note": "16 px drops the bar inside the lens"
+   "note": ""
   },
   {
    "name": "trim",
@@ -196,11 +196,11 @@
    "name": "smart-tool",
    "group": "tool",
    "size_20": {
-    "stroke": "M10 3l1.5 4.5L16 9l-4.5 1.5L10 15l-1.5-4.5L4 9l4.5-1.5z",
+    "stroke": "M4 3l9 7-4 1 2.5 5-2 1-2.5-5-3.5 3zM18 15a2.5 2.5 0 1 0-5 0a2.5 2.5 0 1 0 5 0z",
     "fill": ""
    },
    "size_16": {
-    "stroke": "M8 2l1 4 4 2-4 2-1 4-1-4-4-2 4-2z",
+    "stroke": "M3 2l7 5.5-3 1 2 4-1.5 1-2-4-2.5 2.5zM14 12a2 2 0 1 0-4 0a2 2 0 1 0 4 0z",
     "fill": ""
    },
    "note": ""
@@ -664,11 +664,11 @@
    "name": "stale",
    "group": "product",
    "size_20": {
-    "stroke": "M5 3h10M5 17h10M6 3c0 5 8 5 8 7s-8 2-8 7",
+    "stroke": "M17 10a7 7 0 1 0-14 0a7 7 0 1 0 14 0zM10 6v4l3 2",
     "fill": ""
    },
    "size_16": {
-    "stroke": "M4 2h8M4 14h8M5 2c0 4 6 4 6 6s-6 2-6 6",
+    "stroke": "M13 8a5 5 0 1 0-10 0a5 5 0 1 0 10 0zM8 5v3l2 1",
     "fill": ""
    },
    "note": ""
@@ -858,7 +858,7 @@
   },
   {
    "icons": "zoom, zoom-in, zoom-out, zoom-selection, search",
-   "idea": "A round lens with a handle; a bar, plus or small box inside says what the zoom does.",
+   "idea": "A round lens with a handle; a bar, plus, small box or a centre dot inside says which zoom it is.",
    "convention": "The magnifier with plus and minus is near universal."
   }
  ],

@@ -89,7 +89,7 @@
   {
    "key": "goal_unsupported",
    "text": "That goal is not supported yet. Nothing was changed.",
-   "what_you_can_do": "Choose Headroom, Vocal clarity or Even level.",
+   "what_you_can_do": "Choose one of: {supported_goals}. (List filled from the goals available at build time.)",
    "shown_in": [
     "assistant_response"
    ]
@@ -105,8 +105,8 @@
   },
   {
    "key": "preview_unavailable_plugin",
-   "text": "A plug-in in the signal path cannot be rendered here.",
-   "what_you_can_do": "Preview is off. Bypass the plug-in to hear the change.",
+   "text": "A plug-in in the signal path cannot be rendered here, and bypassing it would make this proposal out of date. Nothing was changed.",
+   "what_you_can_do": "Bypass it, then ask again.",
    "shown_in": [
     "change_review_banner"
    ]

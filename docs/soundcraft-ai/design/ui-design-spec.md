@@ -1,13 +1,13 @@
 # UI design specification (digest of the Claude Design bundle)
 
-**Version:** 0.2 · **Date:** 15 October 2026 · **Status:** Rounds 1 to 6 received and reviewed; **not yet implemented.**
+**Version:** 0.3 · **Date:** 15 October 2026 · **Status:** Rounds 1 to 6 received, the eight requested fixes checked; **not yet implemented.**
 **Source:** the Claude Design bundle "Arrange Window Design Round 1" (rounds 1 to 6; the second download, with `v2` pages that supersede the originals), made from [ui-design-brief.md](../ui-design-brief.md) and [round-6-brief.md](round-6-brief.md).
 **Decisions that override the bundle:** [decisions.md](decisions.md).
 **Machine-readable:** [tokens.json](tokens.json) (colours, type, sizes, palette, redlines, hit areas, fader law), [copy.json](copy.json) (interaction notes and exact wording), [icons.json](icons.json) (63 icons as path data) and [messages.json](messages.json) (the 15 messages from board 6b). Both are generated from the bundle as data by `tools/design/extract_design.py`; nothing in the bundle is executed.
 
 ## 1. What this is, and what is not in the repository
 
-The bundle is a set of design-canvas pages (`*.dc.html`) plus a third-party runtime script (`support.js`) that draws them. **Neither the zips, `support.js`, the 126 icon SVG files nor the design tool's screenshots are committed**: the runtime has no licence header, the pages are an authoring format, every SVG carries an embedded provenance block (about 8 KB each, not needed), and images in the repo need attribution rows. `icons.json` carries the same path data. This document and the two JSON files carry what an implementer needs. To regenerate them, unzip the bundle into a new, empty folder and run `python3 -I tools/design/extract_design.py BUNDLE_DIR docs/soundcraft-ai/design`.
+The bundle is a set of design-canvas pages (`*.dc.html`) plus a third-party runtime script (`support.js`) that draws them. **Neither the zips, `support.js`, the 126 icon SVG files nor the design tool's screenshots are committed**: the runtime has no licence header, the pages are an authoring format, every SVG carries an embedded provenance block (about 8 KB each, not needed), and images in the repo need attribution rows. `icons.json` carries the same path data. This document and the two JSON files carry what an implementer needs. **To import a new version:** unzip the bundle into a new, empty folder; run `python3 -I tools/design/verify_bundle.py BUNDLE_DIR` (it checks the icons, the SVGs, the fader law against the app's, the message style, and whether the fixes asked for in §9 actually landed; it exits non-zero on any FAIL and lists what still needs a human look); then run `python3 -I tools/design/extract_design.py BUNDLE_DIR docs/soundcraft-ai/design` to regenerate the four JSON files. Neither script runs anything from the bundle.
 
 **Direction chosen:** the dark **"Graphite"** direction (dense, teal accent), with **IBM Plex Sans** for the interface and **IBM Plex Mono** for numbers, plus a full light theme. The alternative from round 1 ("Paper": warm light, vermilion accent, Figtree and JetBrains Mono) was not carried forward.
 
@@ -23,7 +23,7 @@ The bundle is a set of design-canvas pages (`*.dc.html`) plus a third-party runt
 | 3a Vocal inspector | Selected-note practice active | 1440 × 900 |
 | 3b Assistant panel | Suggest, running, unavailable | 360 wide (min 320, max 480) |
 | 3c Change review (v2) | Three result kinds; a production proposal shows Preview · Reject only | 440 wide (min 400) |
-| 3d Audition | A/B, matching, keep, keep original, discard | 1040 × 640 (min 800 × 520) |
+| 3d Audition | A/B, matching, keep, keep original, discard; keyboard focus starts on the A/B switch (ring drawn in the third download) | 1040 × 640 (min 800 × 520) |
 | 3e Task history (v2) | All task states, with rejection reasons; "Ready for approval" = audition open | 1040 wide (panel min 640) |
 | 3f Recording health | Status bar 40 px, always visible; warning, error, recovery | n/a |
 | 3g First run, cloud opt-in, missing media | | n/a |
@@ -272,29 +272,28 @@ Numbers in the strings (levels, times, loudness differences, the rule version) a
 - **Fader scale:** redrawn to the real law (§4.2). **Hit areas:** drawn versus clickable sizes for ten dense controls (§4.1).
 - **Messages:** all 11 situations from the round 6 brief plus the three UI-1 strings, 15 messages in all, each saying whether anything changed.
 
-## 9. Open issues found in review
+## 9. Issues found in review, and what is left
 
-**Icons** (see the contact sheets described in §4.3):
-1. **`zoom` and `zoom-out` are near-duplicates at 20 px** (a 4-unit bar against a 6-unit bar inside the lens). The 16 px zoom drops the bar and is a plain magnifier. Give the zoom tool a clearly different glyph.
-2. **`smart-tool` is a four-pointed sparkle**, which has become the common symbol for "AI" in products. In an AI-assisted DAW it will read as the assistant, and it contradicts the brief's rule against "smart" and "magic" connotations. Replace it.
-3. **`stale` reads as a sigma (Σ)**, a poor picture of "out of date". Use a clock, an hourglass or a circular arrow with a dot.
-4. **1 px strokes at 20 px are light** (the design chose them for crispness at 1× and 2×). Check legibility in the built app before accepting them.
-5. **Latch versus touch at 16 px** differ only by a small bar through a ring; check they are tellable apart at 1×.
+**Fixed in the third download** (checked with `tools/design/verify_bundle.py` and by rendering):
+1. **`zoom` was a near-duplicate of `zoom-out`.** It is now a lens with a solid dot, clearly different from zoom-in, zoom-out and zoom-selection at 6× and at true size.
+2. **`smart-tool` was a four-pointed sparkle** (reads as "AI"). It is now a pointer with a small ring: no sparkle, distinct from the marquee selector.
+3. **`stale` read as a sigma.** It is now a clock, clearly different from `recovery` (a circular arrow with a bar). A clock says "time" rather than "out of date", but it is unambiguous and legible.
+4. **`preview_unavailable_plugin`** now says bypassing the plug-in would make the proposal out of date, and tells the user to bypass it and ask again.
+5. **`goal_unsupported`** now takes a `{supported_goals}` placeholder, to be filled from the goals actually available at build time.
+6. **Board 3d** now draws the keyboard focus ring (2 px accent, 4 px offset) on the A/B switch, with the note "Keyboard focus starts on this switch".
 
-**Messages:**
-6. **`preview_unavailable_plugin`** advises "Bypass the plug-in to hear the change". Bypassing changes the session, which makes the proposal stale, so the user would have to ask again; the message should say so.
-7. **`goal_unsupported`** offers Headroom, Vocal clarity and Even level, but only Headroom is admitted in Phase 1. Build the list from the goals actually available.
-8. **`proposal_failed`** has three sentences (the rule was two). Minor.
+**Withdrawn.** I had listed a mismatch between the 6e caption and the labels drawn on the 260 px fader. That came from the design tool's older screenshot; the page's own caption already said that −48 is left unlabelled (so labels stay 14 px apart) and it matches the drawn labels. Not an issue.
 
-**Boards:**
-9. **3d Audition: the initial focus ring on the A/B switch is not drawn** (the design's own conflict list says so).
-10. **6e caption versus drawn labels** for the tallest fader (§4.2): minor.
-11. **The design's own list (board 6x) of conflicts with older boards** is kept in `tokens.json` under `design_listed_conflicts_with_older_boards`. The v2 pages fix 3c, 3e and the notes and copy; **the Round 4 and Round 2 header fader, the sizes table (which should state drawn and hit sizes) and the icon list were not all updated**, so use 6e, §4.1 and 6c.
+**Still open, all minor:**
+7. **`proposal_failed` has three sentences** (the style rule was two). It is a reassurance line ("It was not caused by anything you did"); keep or trim.
+8. **1 px strokes at 20 px, and latch against touch at 16 px,** look legible in the design tool's true-size tiles and in my true-size renders on both themes, but must be checked in the built app at 1× before they are accepted.
+9. **The design's own conflict list (6x)** is kept in `tokens.json` under `design_listed_conflicts_with_older_boards`. The v2 pages fixed 3c, 3e and the notes and copy; the Round 4 and Round 2 header fader, the sizes table and the icon list should be read through 6e, §4.1 and 6c, not their older pages.
+10. **The imitation call** on the icon set is the project owner's: the design lists the generic shapes it used and describes the automation glyphs as its own. The new smart-tool pointer is itself a common cursor shape.
 
-**Build and licence:**
-12. The SVG exports embed a **C2PA content-credentials block** (about 8 KB each). `icons.json` drops it.
-13. **Dots and discs** (overflow, record, record-arm, automation-write) are filled paths, not strokes; the renderer must fill them.
-14. **Dense hit targets** are now specified (§4.1); the app's controls must implement the hit area, not just the drawn size.
+**Build and licence notes:**
+11. The SVG exports embed a **C2PA content-credentials block** (about 8 KB each). `icons.json` drops it.
+12. **Dots and discs** (overflow, record, record-arm, automation-write) and the new zoom dot are filled paths, not strokes; the renderer must fill them.
+13. **Dense hit targets** are specified (§4.1); the app's controls must implement the hit area, not just the drawn size.
 
 ## 10. Implementation notes for egui
 
@@ -310,3 +309,4 @@ The pages were generated by Claude Design from the briefs. They contain no `<img
 |---|---|---|
 | 0.1 | 14 October 2026 | Digest of the received bundle, with extracted tokens and copy. |
 | 0.2 | 15 October 2026 | Round 6 imported (v2 pages, icons, messages, state sheets, fader law, hit areas); icons and fader checked; open issues rewritten. |
+| 0.3 | 15 October 2026 | Third download imported: zoom, smart tool and stale icons replaced, two messages fixed, focus ring drawn on 3d; one issue withdrawn; remaining items are minor. |

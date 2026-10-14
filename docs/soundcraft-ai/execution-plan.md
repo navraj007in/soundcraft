@@ -1,7 +1,7 @@
 # SoundCraft-AI execution plan
 
 **Implements:** [SoundCraft-AI Product Requirements v0.3](../../SoundCraft_AI_PRD_v0.3.docx) (14 October 2026)
-**Plan version:** 0.15 · **Updated:** 14 October 2026 · **Status:** Draft. Phase 0 has not started.
+**Plan version:** 0.16 · **Updated:** 14 October 2026 · **Status:** Draft. Phase 0 has not started.
 **Baseline:** fork `navraj007in/soundcraft`, `main` at `6cf896e` (the PRD's pinned 0.6.1 rebuild).
 
 This plan breaks the PRD into phases, work packages and tasks, and ties each one to the
@@ -229,7 +229,7 @@ the smallest admitted operation set. Section 7 protections apply from the first 
 | P1-I06 | Accessibility | Keyboard operation, readable contrast, no meaning carried by colour alone. Check by rendering with `ui_shot`. The design's contrast values were recomputed and pass its own minimums. |
 | P1-I07 | Design-system theme *(proposed)* | Implement the received design tokens in `crates/ui-egui`: dark and light colour tokens, type scale, sizes, radii, the offset shadow, motion timings and the reduced-motion rule, from [tokens.json](design/tokens.json), including the hit areas for the dense controls. Bundle IBM Plex Sans (400, 500, 600) and Mono (400, 500) with their licence texts and `ATTRIBUTION.md` rows. A live dark and light switch. |
 | P1-I08 | Arrange window restyle *(proposed)* | Restyle the track header (232 × 74, compact 40), clip, toolbar and transport to the redlines in [ui-design-spec.md](design/ui-design-spec.md) §4, with a collapsible ruler and the inspector pane; check each against the boards with side-by-side `ui_shot` renders. Needs the app's real fader law (the mockup's scale is a placeholder). Whether this lands in Phase 1 is a product decision, since the plan holds Phase 1 until the G00 result. |
-| P1-I09 | Icon set in code *(proposed)* | Draw the 63 icons from [icons.json](design/icons.json) at 20 px and 16 px: a small path renderer for `M L H V A C S Z` (absolute and relative; circular arcs), 1 px round strokes with the half-pixel offset, and filled shapes for record, record-arm, automation-write and overflow. Resolve first the open icon issues in [ui-design-spec.md](design/ui-design-spec.md) §9 (zoom versus zoom-out, the sparkle smart tool, the stale icon). Every icon is original and drawn in code, as the repo rule requires; the design tool's imitation notes are in `icons.json` for the owner's review. | FR-13 |
+| P1-I09 | Icon set in code *(proposed)* | Draw the 63 icons from [icons.json](design/icons.json) at 20 px and 16 px: a small path renderer for `M L H V A C S Z` (absolute and relative; circular arcs), 1 px round strokes with the half-pixel offset, and filled shapes for record, record-arm, automation-write and overflow. The earlier icon issues (zoom, the sparkle smart tool, the stale icon) were fixed in the third download; what remains is a 1× legibility check in the built app ([ui-design-spec.md](design/ui-design-spec.md) §9). Every icon is original and drawn in code, as the repo rule requires; the design tool's imitation notes are in `icons.json` for the owner's review. | FR-13 |
 
 ### 5.6 Phase 1 tests and exit
 
@@ -394,3 +394,4 @@ versioned scope change is approved.
 | 0.13 | 14 October 2026 | UI design received (Claude Design bundle, rounds 1 to 5) and digested into `design/ui-design-spec.md`, `design/tokens.json` and `design/copy.json`; P1-I01 to P1-I05 now name their boards; P1-I07 (theme) and P1-I08 (Arrange restyle) proposed; the Approve versus Keep conflict is recorded under P1-I03. |
 | 0.14 | 14 October 2026 | UI-1 approval flow decided (`design/decisions.md`): a production proposal is approved by Keep in the audition and has no Approve in the change review; an explicit assignment is approved in the change list; the controller sets `approval_path`. P1-C01, P1-C04, P1-I03 to P1-I05 updated with acceptance tests. |
 | 0.15 | 15 October 2026 | Round 6 design imported and reviewed: 63 icons (16 px genuinely redrawn), 15 messages, the real fader law confirmed, hit areas, state sheets; extractor extended (`icons.json`, `messages.json`); P1-I09 (icons in code) proposed; open issues listed in `design/ui-design-spec.md` §9. |
+| 0.16 | 15 October 2026 | Third design download imported and verified: the three icon fixes, two message fixes and the 3d focus ring landed, so the eight requested fixes are done and only minor items remain open (spec §9). `tools/design/verify_bundle.py` added. |
