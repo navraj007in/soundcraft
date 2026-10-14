@@ -30,11 +30,27 @@ pub enum TimeError {
     Tempo(f64),
     #[error("invalid meter {0}/{1}")]
     Meter(u32, u32),
+    #[error("invalid tempo map: {0}")]
+    Map(&'static str),
 }
 
 /// Sample rates supported by sessions (Pro Tools offers 44.1 k – 192 k; we accept 8 k – 768 k).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "u32", into = "u32")]
 pub struct SampleRate(u32);
+
+impl TryFrom<u32> for SampleRate {
+    type Error = TimeError;
+    fn try_from(hz: u32) -> Result<Self, TimeError> {
+        SampleRate::new(hz)
+    }
+}
+
+impl From<SampleRate> for u32 {
+    fn from(r: SampleRate) -> u32 {
+        r.0
+    }
+}
 
 impl SampleRate {
     pub const HZ_44100: SampleRate = SampleRate(44_100);

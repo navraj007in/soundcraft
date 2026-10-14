@@ -671,6 +671,16 @@ mod tests {
     }
 
     #[test]
+    fn hostile_timebases_are_refused_at_load() {
+        let mut v = serde_json::to_value(Session::default()).unwrap();
+        v["sample_rate"] = serde_json::json!(0);
+        assert!(Session::from_json(&v.to_string()).is_err());
+        let mut v = serde_json::to_value(Session::default()).unwrap();
+        v["tempo"]["tempos"] = serde_json::json!([{"tick":0,"bpm":120.0},{"tick":i64::MIN,"bpm":120.0},{"tick":i64::MAX,"bpm":120.0}]);
+        assert!(Session::from_json(&v.to_string()).is_err());
+    }
+
+    #[test]
     fn sanitize_repairs() {
         let mut s = Session::default();
         let t = s.add_track(TrackKind::Audio, ChannelFormat::Mono, None);

@@ -5,6 +5,13 @@ use crate::{SampleRate, Samples, TimeError, to_samples};
 /// Ticks per quarter note (Pro Tools' resolution).
 pub const TICKS_PER_QUARTER: i64 = 960;
 
+/// Furthest tick any conversion considers (about 3 million bars of 4/4): keeps every tick and bar
+/// computation far from `i64` overflow, whatever a file or command supplies.
+pub const MAX_TICK: i64 = 1 << 40;
+
+/// Most tempo or meter events one map may hold.
+const MAX_EVENTS: usize = 100_000;
+
 /// A tempo change at a tick position. `bpm` is quarter notes per minute.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TempoEvent {
@@ -40,9 +47,44 @@ pub struct BarBeat {
 
 /// Tempo and meter changes for a session. Always has at least one of each, at tick 0.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "RawTempoMap")]
 pub struct TempoMap {
     tempos: Vec<TempoEvent>,
     meters: Vec<MeterEvent>,
+}
+
+/// The serialized form of a [`TempoMap`], checked on the way in.
+#[derive(serde::Deserialize)]
+struct RawTempoMap {
+    tempos: Vec<TempoEvent>,
+    meters: Vec<MeterEvent>,
+}
+
+impl TryFrom<RawTempoMap> for TempoMap {
+    type Error = TimeError;
+    fn try_from(raw: RawTempoMap) -> Result<Self, TimeError> {
+        if raw.tempos.len() > MAX_EVENTS || raw.meters.len() > MAX_EVENTS {
+            return Err(TimeError::Map("too many events"));
+        }
+        if raw.tempos.first().map(|e| e.tick) != Some(0) || raw.meters.first().map(|e| e.tick) != Some(0) {
+            return Err(TimeError::Map("the first event must be at tick 0"));
+        }
+        if !raw.tempos.windows(2).all(|w| w[0].tick < w[1].tick) || !raw.meters.windows(2).all(|w| w[0].tick < w[1].tick) {
+            return Err(TimeError::Map("events must be in strictly increasing tick order"));
+        }
+        if raw.tempos.iter().any(|e| e.tick > MAX_TICK) || raw.meters.iter().any(|e| e.tick > MAX_TICK) {
+            return Err(TimeError::Map("event beyond the supported range"));
+        }
+        for e in &raw.tempos {
+            valid_bpm(e.bpm)?;
+        }
+        for m in &raw.meters {
+            if !(1..=64).contains(&m.numerator) || ![1, 2, 4, 8, 16, 32, 64].contains(&m.denominator) {
+                return Err(TimeError::Meter(m.numerator, m.denominator));
+            }
+        }
+        Ok(TempoMap { tempos: raw.tempos, meters: raw.meters })
+    }
 }
 
 impl Default for TempoMap {
@@ -73,7 +115,7 @@ impl TempoMap {
     /// Insert or replace the tempo at `tick`.
     pub fn set_tempo(&mut self, tick: i64, bpm: f64) -> Result<(), TimeError> {
         let bpm = valid_bpm(bpm)?;
-        let tick = tick.max(0);
+        let tick = tick.clamp(0, MAX_TICK);
         match self.tempos.binary_search_by(|e| e.tick.cmp(&tick)) {
             Ok(i) => {
                 if let Some(e) = self.tempos.get_mut(i) {
@@ -100,7 +142,7 @@ impl TempoMap {
         if !(1..=64).contains(&numerator) || ![1, 2, 4, 8, 16, 32, 64].contains(&denominator) {
             return Err(TimeError::Meter(numerator, denominator));
         }
-        let tick = if tick <= 0 { 0 } else { self.bar_start_tick(self.bar_beat_at_tick(tick).bar) };
+        let tick = if tick <= 0 { 0 } else { self.bar_start_tick(self.bar_beat_at_tick(tick.min(MAX_TICK)).bar) };
         let ev = MeterEvent { tick, numerator, denominator };
         match self.meters.binary_search_by(|e| e.tick.cmp(&tick)) {
             Ok(i) => {
@@ -158,6 +200,7 @@ impl TempoMap {
     }
 
     fn tick_to_samples_f(&self, tick: i64, sr: SampleRate) -> f64 {
+        let tick = tick.clamp(-MAX_TICK, MAX_TICK);
         let mut acc = 0.0;
         let mut seg_tick = 0i64;
         let mut bpm = self.tempos.first().map_or(120.0, |e| e.bpm);
@@ -196,6 +239,7 @@ impl TempoMap {
 
     /// Tick of the first beat of `bar` (1-based; bars before 1 extend the first meter backwards).
     pub fn bar_start_tick(&self, bar: i64) -> i64 {
+        let bar = bar.clamp(-MAX_TICK, MAX_TICK);
         let mut cur_bar = 1i64;
         let mut cur_tick = 0i64;
         let first = self.meter_at_tick(0);
@@ -219,6 +263,7 @@ impl TempoMap {
 
     /// Bar|beat|tick at `tick`.
     pub fn bar_beat_at_tick(&self, tick: i64) -> BarBeat {
+        let tick = tick.clamp(-MAX_TICK, MAX_TICK);
         let first = self.meter_at_tick(0);
         if tick < 0 {
             let tpb = first.ticks_per_bar();
@@ -252,7 +297,7 @@ impl TempoMap {
     pub fn tick_at_bar_beat(&self, bb: BarBeat) -> i64 {
         let start = self.bar_start_tick(bb.bar);
         let m = self.meter_at_tick(start);
-        start.saturating_add((bb.beat - 1).max(0).saturating_mul(m.ticks_per_beat())).saturating_add(bb.tick)
+        start.saturating_add(bb.beat.saturating_sub(1).max(0).saturating_mul(m.ticks_per_beat())).saturating_add(bb.tick)
     }
 
     pub fn bar_beat_at(&self, s: Samples, sr: SampleRate) -> BarBeat {
@@ -332,5 +377,55 @@ mod tests {
         let m = TempoMap::default();
         assert_eq!(m.bar_beat_at_tick(-TICKS_PER_QUARTER * 4), BarBeat { bar: 0, beat: 1, tick: 0 });
         assert_eq!(m.bar_beat_at_tick(-TICKS_PER_QUARTER), BarBeat { bar: 0, beat: 4, tick: 0 });
+    }
+}
+
+#[cfg(test)]
+mod hostile_tests {
+    use super::*;
+
+    fn parse(json: &str) -> Result<TempoMap, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+
+    #[test]
+    fn a_stored_map_must_be_ordered_in_range_and_start_at_zero() {
+        let ok = r#"{"tempos":[{"tick":0,"bpm":120.0},{"tick":960,"bpm":90.0}],"meters":[{"tick":0,"numerator":4,"denominator":4}]}"#;
+        assert!(parse(ok).is_ok());
+        let bad = [
+            r#"{"tempos":[{"tick":0,"bpm":120.0},{"tick":-9223372036854775808,"bpm":120.0},{"tick":9223372036854775807,"bpm":120.0}],"meters":[{"tick":0,"numerator":4,"denominator":4}]}"#,
+            r#"{"tempos":[],"meters":[{"tick":0,"numerator":4,"denominator":4}]}"#,
+            r#"{"tempos":[{"tick":5,"bpm":120.0}],"meters":[{"tick":0,"numerator":4,"denominator":4}]}"#,
+            r#"{"tempos":[{"tick":0,"bpm":0.0}],"meters":[{"tick":0,"numerator":4,"denominator":4}]}"#,
+            r#"{"tempos":[{"tick":0,"bpm":120.0}],"meters":[{"tick":0,"numerator":0,"denominator":4}]}"#,
+            r#"{"tempos":[{"tick":0,"bpm":120.0},{"tick":960,"bpm":90.0},{"tick":960,"bpm":80.0}],"meters":[{"tick":0,"numerator":4,"denominator":4}]}"#,
+        ];
+        for b in bad {
+            assert!(parse(b).is_err(), "{b}");
+        }
+    }
+
+    #[test]
+    fn a_zero_sample_rate_does_not_deserialize() {
+        assert!(serde_json::from_str::<SampleRate>("0").is_err());
+        assert!(serde_json::from_str::<SampleRate>("48000").is_ok());
+    }
+
+    #[test]
+    fn full_width_inputs_never_overflow() {
+        let m = TempoMap::default();
+        let sr = SampleRate::HZ_48000;
+        for t in [i64::MIN, i64::MIN + 1, -1, 0, i64::MAX - 1, i64::MAX] {
+            let _ = m.tick_to_samples(t, sr);
+            let _ = m.samples_to_ticks(t, sr);
+            let _ = m.bar_beat_at_tick(t);
+            let _ = m.bar_start_tick(t);
+            let _ = m.tick_at_bar_beat(BarBeat { bar: t, beat: t, tick: t });
+            let _ = m.bar_beat_at(t, sr);
+        }
+        let mut m = TempoMap::default();
+        assert!(m.set_tempo(i64::MAX, 100.0).is_ok());
+        assert!(m.set_meter(i64::MAX, 3, 4).is_ok());
+        let _ = m.tick_to_samples(i64::MAX, sr);
     }
 }
