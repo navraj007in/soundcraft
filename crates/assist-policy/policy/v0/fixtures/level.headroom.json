@@ -1,0 +1,2279 @@
+{
+ "rule_id": "level.headroom",
+ "rule_version": "0.1.0",
+ "cases": [
+  {
+   "name": "reduce_to_default_target",
+   "note": "-2.3 dBTP to the -6.0 default: -3.7 dB",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -2.3,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "propose",
+    "branch": "reduce",
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -2.3,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 0.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ],
+    "operations": [
+     {
+      "command": "mix.volume",
+      "target": {
+       "track": 7
+      },
+      "parameter": "db",
+      "unit": "dB",
+      "before": 0.0,
+      "after": -3.7
+     }
+    ],
+    "limits": [],
+    "notes": [],
+    "expected_effect": {
+     "true_peak_dbtp_before": -2.3,
+     "true_peak_dbtp_after": -6.0,
+     "change_db": -3.7
+    }
+   }
+  },
+  {
+   "name": "boost_to_default_target",
+   "note": "+8.2 dB, fader -3.0 to +5.2",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -14.2,
+     "current_volume_db": -3.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "propose",
+    "branch": "boost",
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -14.2,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": -3.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ],
+    "operations": [
+     {
+      "command": "mix.volume",
+      "target": {
+       "track": 7
+      },
+      "parameter": "db",
+      "unit": "dB",
+      "before": -3.0,
+      "after": 5.2
+     }
+    ],
+    "limits": [],
+    "notes": [],
+    "expected_effect": {
+     "true_peak_dbtp_before": -14.2,
+     "true_peak_dbtp_after": -6.0,
+     "change_db": 8.2
+    }
+   }
+  },
+  {
+   "name": "explicit_default_control_equals_omitted",
+   "note": "same result as omitting the control",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -2.3,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    },
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "propose",
+    "branch": "reduce",
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -2.3,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 0.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ],
+    "operations": [
+     {
+      "command": "mix.volume",
+      "target": {
+       "track": 7
+      },
+      "parameter": "db",
+      "unit": "dB",
+      "before": 0.0,
+      "after": -3.7
+     }
+    ],
+    "limits": [],
+    "notes": [],
+    "expected_effect": {
+     "true_peak_dbtp_before": -2.3,
+     "true_peak_dbtp_after": -6.0,
+     "change_db": -3.7
+    }
+   }
+  },
+  {
+   "name": "custom_target",
+   "note": "+5.4 dB, fader -1.5 to +3.9",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -8.4,
+     "current_volume_db": -1.5,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    },
+    "controls": {
+     "target_true_peak_dbtp": -3.0
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "propose",
+    "branch": "boost",
+    "controls": {
+     "target_true_peak_dbtp": -3.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -8.4,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": -1.5,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ],
+    "operations": [
+     {
+      "command": "mix.volume",
+      "target": {
+       "track": 7
+      },
+      "parameter": "db",
+      "unit": "dB",
+      "before": -1.5,
+      "after": 3.9
+     }
+    ],
+    "limits": [],
+    "notes": [],
+    "expected_effect": {
+     "true_peak_dbtp_before": -8.4,
+     "true_peak_dbtp_after": -3.0,
+     "change_db": 5.4
+    }
+   }
+  },
+  {
+   "name": "within_tolerance_no_change",
+   "note": "0.3 dB away: no change",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -6.3,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "no_change",
+    "reason": {
+     "code": "within_tolerance"
+    },
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -6.3,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 0.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ]
+   }
+  },
+  {
+   "name": "exactly_half_a_db_boost_is_proposed",
+   "note": "tolerance is strict: |change| < 0.5 is no change, 0.5 proposes",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -6.5,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "propose",
+    "branch": "boost",
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -6.5,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 0.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ],
+    "operations": [
+     {
+      "command": "mix.volume",
+      "target": {
+       "track": 7
+      },
+      "parameter": "db",
+      "unit": "dB",
+      "before": 0.0,
+      "after": 0.5
+     }
+    ],
+    "limits": [],
+    "notes": [],
+    "expected_effect": {
+     "true_peak_dbtp_before": -6.5,
+     "true_peak_dbtp_after": -6.0,
+     "change_db": 0.5
+    }
+   }
+  },
+  {
+   "name": "exactly_half_a_db_reduce_is_proposed",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -5.5,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "propose",
+    "branch": "reduce",
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -5.5,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 0.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ],
+    "operations": [
+     {
+      "command": "mix.volume",
+      "target": {
+       "track": 7
+      },
+      "parameter": "db",
+      "unit": "dB",
+      "before": 0.0,
+      "after": -0.5
+     }
+    ],
+    "limits": [],
+    "notes": [],
+    "expected_effect": {
+     "true_peak_dbtp_before": -5.5,
+     "true_peak_dbtp_after": -6.0,
+     "change_db": -0.5
+    }
+   }
+  },
+  {
+   "name": "rounding_ties_go_away_from_zero",
+   "note": "-7.25 -> -7.3, 1.25 -> 1.3: +1.3 dB, fader 1.3 to 2.6",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -7.25,
+     "current_volume_db": 1.25,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "propose",
+    "branch": "boost",
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -7.3,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 1.3,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ],
+    "operations": [
+     {
+      "command": "mix.volume",
+      "target": {
+       "track": 7
+      },
+      "parameter": "db",
+      "unit": "dB",
+      "before": 1.3,
+      "after": 2.6
+     }
+    ],
+    "limits": [],
+    "notes": [],
+    "expected_effect": {
+     "true_peak_dbtp_before": -7.3,
+     "true_peak_dbtp_after": -6.0,
+     "change_db": 1.3
+    }
+   }
+  },
+  {
+   "name": "clipped_source_may_be_reduced_with_a_note",
+   "note": "-6.8 dB, note source_clipped",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": 0.8,
+     "current_volume_db": 0.0,
+     "clipped_samples": 12,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "propose",
+    "branch": "reduce",
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": 0.8,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 0.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 12,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ],
+    "operations": [
+     {
+      "command": "mix.volume",
+      "target": {
+       "track": 7
+      },
+      "parameter": "db",
+      "unit": "dB",
+      "before": 0.0,
+      "after": -6.8
+     }
+    ],
+    "limits": [],
+    "notes": [
+     "source_clipped"
+    ],
+    "expected_effect": {
+     "true_peak_dbtp_before": 0.8,
+     "true_peak_dbtp_after": -6.0,
+     "change_db": -6.8
+    }
+   }
+  },
+  {
+   "name": "clipped_source_is_not_boosted",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -12.0,
+     "current_volume_db": 0.0,
+     "clipped_samples": 5,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "clipped_source_no_boost"
+    },
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -12.0,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 0.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 5,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ]
+   }
+  },
+  {
+   "name": "max_change_limits_a_reduction",
+   "note": "wants -26.0, limited to -12.0",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": 20.0,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "propose",
+    "branch": "reduce",
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": 20.0,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 0.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ],
+    "operations": [
+     {
+      "command": "mix.volume",
+      "target": {
+       "track": 7
+      },
+      "parameter": "db",
+      "unit": "dB",
+      "before": 0.0,
+      "after": -12.0
+     }
+    ],
+    "limits": [
+     "max_change"
+    ],
+    "notes": [],
+    "expected_effect": {
+     "true_peak_dbtp_before": 20.0,
+     "true_peak_dbtp_after": 8.0,
+     "change_db": -12.0
+    }
+   }
+  },
+  {
+   "name": "max_change_limits_a_boost",
+   "note": "wants +34.0, limited to +12.0, fader -10.0 to +2.0",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -40.0,
+     "current_volume_db": -10.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "propose",
+    "branch": "boost",
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -40.0,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": -10.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ],
+    "operations": [
+     {
+      "command": "mix.volume",
+      "target": {
+       "track": 7
+      },
+      "parameter": "db",
+      "unit": "dB",
+      "before": -10.0,
+      "after": 2.0
+     }
+    ],
+    "limits": [
+     "max_change"
+    ],
+    "notes": [],
+    "expected_effect": {
+     "true_peak_dbtp_before": -40.0,
+     "true_peak_dbtp_after": -28.0,
+     "change_db": 12.0
+    }
+   }
+  },
+  {
+   "name": "fader_ceiling_limits_a_boost",
+   "note": "wants +6.0, fader would be 9.0, limited to 6.0 (+3.0)",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -12.0,
+     "current_volume_db": 3.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "propose",
+    "branch": "boost",
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -12.0,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 3.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ],
+    "operations": [
+     {
+      "command": "mix.volume",
+      "target": {
+       "track": 7
+      },
+      "parameter": "db",
+      "unit": "dB",
+      "before": 3.0,
+      "after": 6.0
+     }
+    ],
+    "limits": [
+     "fader_bounds"
+    ],
+    "notes": [],
+    "expected_effect": {
+     "true_peak_dbtp_before": -12.0,
+     "true_peak_dbtp_after": -9.0,
+     "change_db": 3.0
+    }
+   }
+  },
+  {
+   "name": "both_limits_apply_in_order",
+   "note": "max_change then fader_bounds",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -40.0,
+     "current_volume_db": -3.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "propose",
+    "branch": "boost",
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -40.0,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": -3.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ],
+    "operations": [
+     {
+      "command": "mix.volume",
+      "target": {
+       "track": 7
+      },
+      "parameter": "db",
+      "unit": "dB",
+      "before": -3.0,
+      "after": 6.0
+     }
+    ],
+    "limits": [
+     "max_change",
+     "fader_bounds"
+    ],
+    "notes": [],
+    "expected_effect": {
+     "true_peak_dbtp_before": -40.0,
+     "true_peak_dbtp_after": -31.0,
+     "change_db": 9.0
+    }
+   }
+  },
+  {
+   "name": "fader_floor_limits_a_reduction",
+   "note": "wants -9.0, fader would be -67.0, limited to -60.0 (-2.0)",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": 3.0,
+     "current_volume_db": -58.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "propose",
+    "branch": "reduce",
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": 3.0,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": -58.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ],
+    "operations": [
+     {
+      "command": "mix.volume",
+      "target": {
+       "track": 7
+      },
+      "parameter": "db",
+      "unit": "dB",
+      "before": -58.0,
+      "after": -60.0
+     }
+    ],
+    "limits": [
+     "fader_bounds"
+    ],
+    "notes": [],
+    "expected_effect": {
+     "true_peak_dbtp_before": 3.0,
+     "true_peak_dbtp_after": 1.0,
+     "change_db": -2.0
+    }
+   }
+  },
+  {
+   "name": "already_at_fader_ceiling_proposes_nothing",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -12.0,
+     "current_volume_db": 6.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "limited_to_nothing"
+    },
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -12.0,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 6.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ]
+   }
+  },
+  {
+   "name": "fader_above_policy_range_would_need_the_opposite_move",
+   "note": "boost wanted, ceiling would force a cut",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -12.0,
+     "current_volume_db": 8.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "limited_to_nothing"
+    },
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -12.0,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 8.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ]
+   }
+  },
+  {
+   "name": "fader_far_below_policy_range_is_not_dragged_into_it",
+   "note": "wants +6.0; clamping -94 up to -60 would be +40.0",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -12.0,
+     "current_volume_db": -100.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "limited_to_nothing"
+    },
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -12.0,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": -100.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ]
+   }
+  },
+  {
+   "name": "fader_below_the_floor_cannot_be_cut_further",
+   "note": "wants -9.0; any cut goes further below the floor and clamping would reverse it",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": 3.0,
+     "current_volume_db": -100.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "limited_to_nothing"
+    },
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": 3.0,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": -100.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ]
+   }
+  },
+  {
+   "name": "missing_measurement",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "invalid_input",
+     "field": "true_peak_dbtp"
+    }
+   }
+  },
+  {
+   "name": "measurement_out_of_range",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": 500.0,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "invalid_input",
+     "field": "true_peak_dbtp"
+    }
+   }
+  },
+  {
+   "name": "measurement_wrong_type",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": "loud",
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "invalid_input",
+     "field": "true_peak_dbtp"
+    }
+   }
+  },
+  {
+   "name": "measurement_null",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": null,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "invalid_input",
+     "field": "true_peak_dbtp"
+    }
+   }
+  },
+  {
+   "name": "integer_input_given_a_fraction",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -2.3,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000.5,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "invalid_input",
+     "field": "active_ms"
+    }
+   }
+  },
+  {
+   "name": "flag_given_a_number",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -2.3,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": 1,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "invalid_input",
+     "field": "role_confirmed"
+    }
+   }
+  },
+  {
+   "name": "unknown_input_is_rejected",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -2.3,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true,
+     "extra": 1
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "invalid_input",
+     "field": "extra"
+    }
+   }
+  },
+  {
+   "name": "unknown_top_level_key_is_rejected",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -2.3,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    },
+    "extra": true
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "invalid_input",
+     "field": "extra"
+    }
+   }
+  },
+  {
+   "name": "control_out_of_range",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -2.3,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    },
+    "controls": {
+     "target_true_peak_dbtp": -0.5
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "invalid_input",
+     "field": "target_true_peak_dbtp"
+    }
+   }
+  },
+  {
+   "name": "control_off_its_step",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -2.3,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    },
+    "controls": {
+     "target_true_peak_dbtp": -6.2
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "invalid_input",
+     "field": "target_true_peak_dbtp"
+    }
+   }
+  },
+  {
+   "name": "unknown_control_is_rejected",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -2.3,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    },
+    "controls": {
+     "target_ceiling": -6.0
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "invalid_input",
+     "field": "target_ceiling"
+    }
+   }
+  },
+  {
+   "name": "request_is_not_an_object",
+   "note": "",
+   "request": [
+    1,
+    2,
+    3
+   ],
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "invalid_input",
+     "field": "request"
+    }
+   }
+  },
+  {
+   "name": "goal_missing",
+   "note": "",
+   "request": {
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -2.3,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "invalid_input",
+     "field": "goal"
+    }
+   }
+  },
+  {
+   "name": "unsupported_goal",
+   "note": "",
+   "request": {
+    "goal": "clarity",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -2.3,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "unsupported_goal",
+     "field": "goal"
+    }
+   }
+  },
+  {
+   "name": "rule_version_mismatch",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -2.3,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    },
+    "rule_version": "0.0.9"
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "rule_version_mismatch",
+     "field": "rule_version"
+    }
+   }
+  },
+  {
+   "name": "matching_rule_version_is_accepted",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -2.3,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    },
+    "rule_version": "0.1.0"
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "propose",
+    "branch": "reduce",
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -2.3,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 0.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ],
+    "operations": [
+     {
+      "command": "mix.volume",
+      "target": {
+       "track": 7
+      },
+      "parameter": "db",
+      "unit": "dB",
+      "before": 0.0,
+      "after": -3.7
+     }
+    ],
+    "limits": [],
+    "notes": [],
+    "expected_effect": {
+     "true_peak_dbtp_before": -2.3,
+     "true_peak_dbtp_after": -6.0,
+     "change_db": -3.7
+    }
+   }
+  },
+  {
+   "name": "stale_analysis",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -2.3,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": false
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "stale_analysis"
+    },
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -2.3,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 0.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ]
+   }
+  },
+  {
+   "name": "role_not_confirmed",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -2.3,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": false,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "role_not_confirmed"
+    },
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -2.3,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 0.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ]
+   }
+  },
+  {
+   "name": "fader_automation_blocks_a_static_change",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -2.3,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": true,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "automation_conflict"
+    },
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -2.3,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 0.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ]
+   }
+  },
+  {
+   "name": "too_little_signal",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -2.3,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 400,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "insufficient_signal"
+    },
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -2.3,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 0.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 400,
+      "unit": "ms"
+     }
+    ]
+   }
+  },
+  {
+   "name": "almost_silent_selection",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -70.0,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "signal_too_quiet"
+    },
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -70.0,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 0.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ]
+   }
+  },
+  {
+   "name": "precedence_stale_before_role",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -2.3,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 8000,
+     "role_confirmed": false,
+     "volume_automation_active": true,
+     "analysis_current": false
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "stale_analysis"
+    },
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -2.3,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 0.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ]
+   }
+  },
+  {
+   "name": "precedence_signal_length_before_silence",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -70.0,
+     "current_volume_db": 0.0,
+     "clipped_samples": 0,
+     "active_ms": 400,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "insufficient_signal"
+    },
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -70.0,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 0.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 0,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 400,
+      "unit": "ms"
+     }
+    ]
+   }
+  },
+  {
+   "name": "precedence_silence_before_clipping",
+   "note": "",
+   "request": {
+    "goal": "headroom",
+    "inputs": {
+     "track_id": 7,
+     "true_peak_dbtp": -70.0,
+     "current_volume_db": 0.0,
+     "clipped_samples": 3,
+     "active_ms": 8000,
+     "role_confirmed": true,
+     "volume_automation_active": false,
+     "analysis_current": true
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "signal_too_quiet"
+    },
+    "controls": {
+     "target_true_peak_dbtp": -6.0
+    },
+    "measurements": [
+     {
+      "name": "true_peak_dbtp",
+      "value": -70.0,
+      "unit": "dBTP",
+      "signal_location": "channel_output_after_fader"
+     },
+     {
+      "name": "current_volume_db",
+      "value": 0.0,
+      "unit": "dB"
+     },
+     {
+      "name": "clipped_samples",
+      "value": 3,
+      "unit": "count"
+     },
+     {
+      "name": "active_ms",
+      "value": 8000,
+      "unit": "ms"
+     }
+    ]
+   }
+  },
+  {
+   "name": "precedence_unsupported_goal_before_bad_inputs",
+   "note": "",
+   "request": {
+    "goal": "clarity",
+    "inputs": {
+     "nonsense": 1
+    }
+   },
+   "expect": {
+    "contract": "soundcraft-assist-policy/1",
+    "rule": {
+     "id": "level.headroom",
+     "version": "0.1.0",
+     "goal": "headroom"
+    },
+    "outcome": "abstain",
+    "reason": {
+     "code": "unsupported_goal",
+     "field": "goal"
+    }
+   }
+  }
+ ]
+}

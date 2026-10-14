@@ -3441,6 +3441,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "soundcraft-assist-policy"
+version = "0.6.1"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "soundcraft-au-host"
 version = "0.6.1"
 dependencies = [

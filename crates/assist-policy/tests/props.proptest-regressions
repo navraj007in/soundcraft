@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc b947ad382526e06286c0385ab433aa61fd120efc988d13439b174e3a25932044 # shrinks to r = Object {"controls": Object {"target_true_peak_dbtp": Number(-12.0)}, "goal": String("headroom"), "inputs": Object {"active_ms": Number(1000), "analysis_current": Bool(true), "clipped_samples": Number(0), "current_volume_db": Number(-125.83128279666288), "role_confirmed": Bool(true), "track_id": Number(1), "true_peak_dbtp": Number(-18.035007162060445), "volume_automation_active": Bool(false)}}

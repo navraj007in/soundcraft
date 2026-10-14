@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "rule_id": "level.headroom",
+  "rule_version": "0.1.0",
+  "goal": "headroom",
+  "summary": "Set a confirmed lead-vocal track's fader so the vocal's true peak at the channel output lands on a target, within bounds, using only the fader. Proposes nothing when the evidence is missing, stale or unsuitable.",
+  "inputs": [
+    { "name": "track_id", "kind": "integer", "min": 1, "max": 9007199254740991, "used_for": "the target of the operation" },
+    { "name": "true_peak_dbtp", "kind": "number", "unit": "dBTP", "signal_location": "channel_output_after_fader", "min": -150.0, "max": 24.0, "used_for": "the level being moved" },
+    { "name": "current_volume_db", "kind": "number", "unit": "dB", "min": -144.0, "max": 12.0, "used_for": "the fader value the change is added to" },
+    { "name": "clipped_samples", "kind": "integer", "unit": "count", "min": 0, "max": 9007199254740991, "used_for": "refuse boosting a clipped source" },
+    { "name": "active_ms", "kind": "integer", "unit": "ms", "min": 0, "max": 300000, "used_for": "enough signal to trust the peak" },
+    { "name": "role_confirmed", "kind": "boolean", "used_for": "track role is a user-confirmed lead vocal" },
+    { "name": "volume_automation_active", "kind": "boolean", "used_for": "existing automation would override a static fader" },
+    { "name": "analysis_current", "kind": "boolean", "used_for": "the measurements come from the current session content" }
+  ],
+  "controls": [
+    { "name": "target_true_peak_dbtp", "unit": "dBTP", "default": -6.0, "min": -12.0, "max": -1.0, "step": 0.5 }
+  ],
+  "thresholds": {
+    "min_active_ms": 1000,
+    "silence_floor_dbtp": -60.0,
+    "no_change_tolerance_db": 0.5,
+    "max_change_db": 12.0,
+    "fader_min_db": -60.0,
+    "fader_max_db": 6.0
+  },
+  "operations": [
+    { "command": "mix.volume", "parameter": "db", "unit": "dB", "reversible": true }
+  ],
+  "order": [
+    "unsupported_goal", "rule_version_mismatch", "invalid_input", "stale_analysis", "role_not_confirmed",
+    "automation_conflict", "insufficient_signal", "signal_too_quiet", "clipped_source_no_boost", "limited_to_nothing"
+  ],
+  "abstain": [
+    { "code": "invalid_input", "when": "The request is not an object, the goal is missing or not text, or a measurement or a control is missing, has the wrong type, is not finite, is outside its declared range, or is not declared.", "message": "The request is not valid for this rule, so nothing was proposed." },
+    { "code": "unsupported_goal", "when": "The goal is not the one this rule handles.", "message": "This rule only handles the headroom goal." },
+    { "code": "rule_version_mismatch", "when": "The request names a rule version other than this one.", "message": "The request was made for a different version of this rule, so it was not reproduced." },
+    { "code": "stale_analysis", "when": "The measurements are not from the current session content.", "message": "The measurements are out of date. Run the check again." },
+    { "code": "role_not_confirmed", "when": "The track is not a user-confirmed lead vocal.", "message": "Confirm that this track is the lead vocal first." },
+    { "code": "automation_conflict", "when": "The fader has automation that would override a static setting.", "message": "The fader is automated, so a static change would be overridden." },
+    { "code": "insufficient_signal", "when": "Less than the minimum active signal was measured.", "message": "There is too little signal in the selected range to set a level." },
+    { "code": "signal_too_quiet", "when": "The measured true peak is below the silence floor.", "message": "The selection is almost silent, so a level cannot be set from it." },
+    { "code": "clipped_source_no_boost", "when": "The change would raise the level and the source already clips.", "message": "The source is clipped. Raising the level would not repair it." },
+    { "code": "limited_to_nothing", "when": "The fader bounds leave no useful change, one in the opposite direction, or one larger than the change the rule would otherwise make (a fader far outside the policy range is not dragged into it).", "message": "The fader limits leave no useful change." }
+  ],
+  "no_change": { "code": "within_tolerance", "message": "The true peak is already within the tolerance of the target." }
+}

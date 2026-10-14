@@ -1,7 +1,7 @@
 # SoundCraft-AI execution plan
 
 **Implements:** [SoundCraft-AI Product Requirements v0.3](../../SoundCraft_AI_PRD_v0.3.docx) (14 October 2026)
-**Plan version:** 0.6 · **Updated:** 14 October 2026 · **Status:** Draft. Phase 0 has not started.
+**Plan version:** 0.7 · **Updated:** 14 October 2026 · **Status:** Draft. Phase 0 has not started.
 **Baseline:** fork `navraj007in/soundcraft`, `main` at `6cf896e` (the PRD's pinned 0.6.1 rebuild).
 
 This plan breaks the PRD into phases, work packages and tasks, and ties each one to the
@@ -86,7 +86,8 @@ registered with `cargo xtask layers`:
 | Optional `Session.applied_tasks` lineage marker | `crates/model` | L2 | `#[serde(default)]`; older builds ignore it |
 | Token-authenticated control endpoint | `apps/soundcraft/src/control_server.rs`, `crates/automation` | apps / L5 | Generic |
 | Plan / approval / receipt / analysis contracts | new `crates/assist-contract` | L2–L4 (serde-only) | Versioned schemas shared by the app and the companion |
-| Execution controller, journal, policy, analysis broker, model adapter | new `apps/soundcraft-assist` (companion process) | apps | Single owner of task state (PRD §10.1) |
+| Execution controller, journal, analysis broker, model adapter | new `apps/soundcraft-assist` (companion process) | apps | Single owner of task state (PRD §10.1) |
+| Production policy: rule declarations, evaluator, fixtures | `crates/assist-policy` (`soundcraft-assist-policy`, branch `spike/policy`) | L0, standalone | Pure and deterministic; the companion depends on it. See [production-policy.md](production-policy.md) |
 | F0 tracker with confidence, rule features | `crates/dsp` (new `f0.rs`, `features.rs`) | L1 | The existing `pitch_detect.rs` stays as is for Audio to MIDI |
 | Assistant, vocal inspector, change review, audition, history panels | `crates/ui-egui` | L6 | UI commands go in `UI_COMMANDS` |
 
@@ -197,7 +198,7 @@ the smallest admitted operation set. Section 7 protections apply from the first 
 | ID | Task | Detail | FR / Gate |
 |---|---|---|---|
 | P1-A01 | Audio broker | Pulls immutable PCM from one coherent session snapshot. Integer sample ranges, start-inclusive and end-exclusive. Maps source to session through trim and sample-rate conversion. Blocks analysis on unmapped transforms. Signal locations per PRD §8.2. | FR-01, FR-03 |
-| P1-A02 | Level features | Peak, true-peak, RMS, integrated and short-term loudness, clipping, for each named range and signal location. | FR-01, FR-04 |
+| P1-A02 | Level features | Peak, true-peak, RMS, integrated and short-term loudness, clipping, for each named range and signal location. Must supply the headroom rule's inputs: true peak at the channel output after the fader, clipped-sample count and active milliseconds, each with a declared method version. | FR-01, FR-04 |
 | P1-A03 | F0 tracker v1 | The tracker chosen in P0-T08, in `crates/dsp/src/f0.rs`. Continuous Hz and cents, a voiced mask, separate voicing and F0 confidence, 65–1100 Hz, ≤ 5-minute jobs. Confidence is never shown as a probability unless it has been calibrated. | FR-03 / G06, G07 |
 | P1-A04 | Cache and invalidation | Keyed by source fingerprint, range, signal dependencies, algorithm version and settings. Changing Sa remaps without rerunning F0. Stale annotations are shown and can't be used as evidence (PRD §8.4). | FR-03 / G07 |
 
@@ -205,7 +206,7 @@ the smallest admitted operation set. Section 7 protections apply from the first 
 
 | ID | Task | Detail | FR / Gate |
 |---|---|---|---|
-| P1-M01 | Production policy v1: headroom/level | Deterministic: the same fingerprint, goal, controls, rule version and manifest give the same plan. Records matched rule, measurements, before and after, limits and expected effect. Abstains when evidence is missing. | FR-04 / G08 |
+| P1-M01 | Production policy v1: headroom/level | Start from the P0-T09 crate and rule `level.headroom` 0.1.0 ([production-policy.md](production-policy.md); 44 fixtures, property tests). Deterministic: the same fingerprint, goal, controls, rule version and manifest give the same plan. Records matched rule, measurements, before and after, limits and expected effect. Abstains when evidence is missing. **To add:** an input and abstention code for a track in an active mix group (the fader move would reach its siblings, and P1-E06 would reject the plan after audition); the controller adds the content fingerprint and processor-manifest digest; confirm the thresholds against G00 and listening checks, bumping the rule version for any change. | FR-04 / G08 |
 | P1-M02 | Gain processor conformance | Gain-factor tests at known levels, bypass, persistence. | FR-04 / G05 |
 | P1-M03 | Model adapter (cloud, opt in, text only) | Maps intent to a supported goal, asks for clarification, explains the supplied evidence. **Never supplies parameter values.** Pseudonymous track IDs. Provider disclosure screen. Credentials in the macOS Keychain. **Can't call the provider until P1-M04 passes its tests.** | FR-04, FR-13 / G03, G12 |
 | P1-M04 | Cloud budget enforcement | PRD §11.2. (a) The user sets a currency budget per task or per day before the first cloud call; with no budget set, cloud calls are refused. (b) A versioned rate table records the provider, model, per-token rates and the date they were checked. Missing or stale rates (older than a configured age, or an unknown model) block automatic continuation and ask the user. (c) Before each call, reserve a conservative upper bound (maximum input tokens plus maximum output tokens times the rates, for the call and its one allowed retry). Refuse the call if the reservation exceeds the remaining budget. (d) After each call, record provider-reported usage, release the unused reservation, and reconcile; log any mismatch. (e) The UI states that charges created outside the app are not capped. Tests: no budget set, budget exhausted mid-task, stale rate table, provider usage above the reservation. **Lands before the first cloud-enabled prototype build.** | FR-13 / G12 |
@@ -380,3 +381,4 @@ versioned scope change is approved.
 | 0.4 | 14 October 2026 | P0-T01 and P0-T03 results: CI passes on Rust 1.97.0 (the repository needs 1.95 or later); AAC priming not trimmed, so P1-E07 and D9 added; import and save/reopen evidence recorded in `import-matrix.md`. |
 | 0.5 | 14 October 2026 | P0-T06 spike results: the raw revision moves on selection and playhead changes, so staleness uses a content revision (P1-E01, P1-E02); D5 closed; guarded group publication shown to work on the existing history; findings in `spike-guarded-publish.md`. |
 | 0.6 | 14 October 2026 | P0-T07: control channel protection designed and tested (`control-channel-protection.md`); the browser-to-loopback attack is demonstrated; P1-E03 now names the design, the 7 ignored tests and an estimate. |
+| 0.7 | 14 October 2026 | P0-T09: production policy rule format and `level.headroom` 0.1.0 with 44 fixtures and property tests (`production-policy.md`); a bounds-clamp defect found by the property tests and fixed; P1-M01 and P1-A02 point at it; the new crate is listed in the code-location table. |
