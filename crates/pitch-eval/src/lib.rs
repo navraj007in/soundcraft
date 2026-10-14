@@ -68,6 +68,30 @@ impl Tracker for YinTracker {
     }
 }
 
+/// The probabilistic YIN tracker from `soundcraft-dsp`, at the harness grid. Its confidence is the
+/// product of its voicing score and its pitch score: both are uncalibrated rankings, not probabilities.
+pub struct PyinTracker(pub soundcraft_dsp::f0::PyinTracker);
+
+impl PyinTracker {
+    pub fn new() -> Result<PyinTracker, String> {
+        soundcraft_dsp::f0::PyinTracker::new(soundcraft_dsp::f0::PyinParams::default()).map(PyinTracker)
+    }
+}
+
+impl Tracker for PyinTracker {
+    fn name(&self) -> String {
+        let p = self.0.params();
+        format!(
+            "pyin({} to {} Hz, {} cents/bin, step {} bins, switch {}, {} thresholds)",
+            p.min_hz, p.max_hz, p.cents_per_bin, p.max_step_bins, p.switch_prob, p.n_thresholds
+        )
+    }
+
+    fn track(&self, mono: &[f32], sample_rate: u32) -> Vec<EstFrame> {
+        self.0.track(mono, sample_rate).into_iter().map(|f| EstFrame { f0_hz: f.f0_hz, confidence: Some(f.voicing_score * f.f0_score) }).collect()
+    }
+}
+
 /// Reference annotation: `(time_s, f0_hz)` rows, `f0_hz <= 0` meaning unvoiced. A value holds until the
 /// next row; the last row holds for one hop. A file should end with an explicit unvoiced row.
 #[derive(Debug, Clone, Default, PartialEq)]

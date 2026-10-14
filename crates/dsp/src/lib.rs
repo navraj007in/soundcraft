@@ -14,6 +14,7 @@
 //! Audio is planar `f32`: `io[channel][frame]`.
 
 pub mod biquad;
+pub mod f0;
 pub mod meter;
 pub mod offline;
 mod osc;

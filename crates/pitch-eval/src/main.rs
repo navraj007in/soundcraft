@@ -1,6 +1,6 @@
 //! `soundcraft-pitch-eval MANIFEST.json [options]`: score a tracker on annotated vocal excerpts.
 //!
-//! Options: `--split dev|holdout|all` (default `dev`), `--frozen-thresholds LABEL` (required for any
+//! Options: `--tracker yin|pyin` (default `yin`), `--split dev|holdout|all` (default `dev`), `--frozen-thresholds LABEL` (required for any
 //! run that touches the holdout), `--bootstrap N` (default 2000), `--seed S` (default 20261014),
 //! `--hc-threshold X` (default 0.8), `--json PATH`.
 //!
@@ -112,7 +112,14 @@ fn main() -> ExitCode {
     }
 
     let base = manifest_path.parent().map(Path::to_path_buf).unwrap_or_default();
-    let tracker = YinTracker::default();
+    let tracker: Box<dyn Tracker> = match arg(&args, "--tracker").as_deref().unwrap_or("yin") {
+        "yin" => Box::new(YinTracker::default()),
+        "pyin" => match PyinTracker::new() {
+            Ok(t) => Box::new(t),
+            Err(e) => return fail(format!("pyin: {e}")),
+        },
+        other => return fail(format!("--tracker must be yin or pyin, not `{other}`")),
+    };
     let mut scored = Vec::new();
     let mut seconds = 0.0;
     for e in manifest.excerpts.iter().filter(|e| split == "all" || e.split == split) {

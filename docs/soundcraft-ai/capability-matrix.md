@@ -1,7 +1,7 @@
 # SoundCraft-AI capability matrix
 
 **Task:** P0-T02 in the [execution plan](execution-plan.md) · **Spec:** PRD v0.3 §3.1–§3.2
-**Matrix version:** 0.5 · **Updated:** 14 October 2026 · **Status:** Source pass complete. Row 9 (backing import) has a first runtime measurement on the inspection host; every other runtime column is unverified.
+**Matrix version:** 0.6 · **Updated:** 14 October 2026 · **Status:** Source pass complete. Row 9 (backing import) has a first runtime measurement on the inspection host; every other runtime column is unverified.
 
 This matrix records, for each foundation capability the PRD depends on, three independent kinds of
 evidence (PRD §3.1):
@@ -170,7 +170,9 @@ A passing entry needs an evidence link and a date (PRD §15).
   - Tests: 3 in `pitch_detect.rs`, 1 in `audio_midi.rs`.
 - **Consequence:** a candidate input aid, not a confidence-bearing continuous contour (PRD §6.3).
   It is the baseline in the P0-T08 benchmark.
-- **Runtime-tested:** Unverified.
+- **Runtime-tested (P0-T08, inspection host):** with synthetic tones only (not valid for G06), the existing YIN path
+  fails to find a tone at 5 dB signal-to-noise (0%) and misses 6% of frames in phrases with pauses; the new probabilistic tracker
+  finds 99.2% and 97.9%. Neither works at 0 dB. See [pitch-eval-harness.md](pitch-eval-harness.md). Natural vocals are untested.
 
 ### 9. Backing import (S2)
 
@@ -253,3 +255,4 @@ The PRD's source labels and the repository paths they point to at the pinned com
 | 0.3 | 14 October 2026 | P0-T06 runtime results for rows 4 and 5 (spike branch, inspection host). |
 | 0.4 | 14 October 2026 | P0-T07 runtime result for row 7. |
 | 0.5 | 14 October 2026 | P0-T04 and P0-T05 (software half) runtime results for rows 1 to 3. |
+| 0.6 | 14 October 2026 | P0-T08 results for row 8 (synthetic only). |
