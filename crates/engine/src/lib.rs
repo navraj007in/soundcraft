@@ -103,6 +103,9 @@ struct HistoryEntry {
 pub struct Engine {
     doc: Arc<Session>,
     undo: Vec<HistoryEntry>,
+    /// How many undo entries were ever pushed: tells a merged call whether it pushed one, which
+    /// the stack's length cannot once eviction holds it constant.
+    undo_pushes: u64,
     redo: Vec<HistoryEntry>,
     pub history_limit: usize,
     pub clipboard: Clipboard,
@@ -142,6 +145,7 @@ impl Engine {
             saved: Arc::clone(&doc),
             doc,
             undo: Vec::new(),
+            undo_pushes: 0,
             redo: Vec::new(),
             history_limit: 200,
             clipboard: Clipboard::default(),
@@ -251,6 +255,7 @@ impl Engine {
             return;
         }
         self.undo.push(HistoryEntry { label: label.to_string(), doc: before });
+        self.undo_pushes = self.undo_pushes.wrapping_add(1);
         self.redo.clear();
         if self.undo.len() > self.history_limit {
             let excess = self.undo.len() - self.history_limit;
@@ -323,11 +328,22 @@ impl Engine {
     /// with the same `key` collapse into a single undo step.
     pub fn execute_merged(&mut self, id: &str, params: &Value, key: &str) -> Result<Value> {
         let continuing = self.merge_key.as_deref() == Some(key);
-        let before_len = self.undo.len();
-        let r = self.execute(id, params)?;
-        if continuing && self.undo.len() == before_len + 1 && before_len > 0 {
+        let (before_len, before_pushes, limit) = (self.undo.len(), self.undo_pushes, self.history_limit);
+        if continuing {
+            // The step about to be pushed is dropped again below, so it must not evict the oldest
+            // entry first: the gesture's own first step has to survive at the history cap.
+            self.history_limit = usize::MAX;
+        }
+        let r = self.execute(id, params);
+        self.history_limit = limit;
+        let r = r?;
+        if continuing && self.undo_pushes == before_pushes.wrapping_add(1) && before_len > 0 {
             // Drop the step just pushed; the earlier one still holds the pre-gesture document.
             self.undo.pop();
+        }
+        if self.undo.len() > limit {
+            let excess = self.undo.len() - limit;
+            self.undo.drain(..excess);
         }
         self.merge_key = Some(key.to_string());
         Ok(r)
@@ -406,6 +422,23 @@ mod merge_tests {
         assert_eq!(e.undo_history().len(), 1);
         e.undo();
         assert_eq!(e.session().track(t).unwrap().mixer.volume_db, 0.0);
+    }
+
+    #[test]
+    fn a_gesture_at_the_history_cap_still_undoes_to_its_starting_value() {
+        let mut e = Engine::default();
+        let t = e.session_mut().add_track(soundcraft_model::TrackKind::Audio, soundcraft_model::ChannelFormat::Mono, None);
+        e.history_limit = 2;
+        for db in [-1.0, -2.0] {
+            e.execute("mix.volume", &json!({"track": t.0, "db": db})).unwrap();
+        }
+        for db in [-3.0, -4.0, -5.0] {
+            e.execute_merged("mix.volume", &json!({"track": t.0, "db": db}), "drag").unwrap();
+        }
+        e.end_merge();
+        assert_eq!(e.undo_history().len(), 2, "the cap still holds");
+        e.undo();
+        assert_eq!(e.session().track(t).unwrap().mixer.volume_db, -2.0);
     }
 }
 
