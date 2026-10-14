@@ -306,6 +306,11 @@ pub struct Session {
     pub next_id: u64,
     #[serde(default)]
     pub comments: String,
+    /// Persistent identity of this session across saves, renames and Save As. Names the recovery
+    /// folder so same-named sessions never share one. Empty only while loading an older file;
+    /// `sanitize` fills it.
+    #[serde(default)]
+    pub uid: String,
     /// Original MIDI performances keyed by clip id (Event › MIDI Operations › Restore/Flatten
     /// Performance). Independent of undo so a restore survives later edits.
     #[serde(default)]
@@ -315,6 +320,17 @@ pub struct Session {
     /// The folder relative source paths point into: where the session was opened or last saved.
     #[serde(skip)]
     pub folder: Option<std::path::PathBuf>,
+}
+
+/// A fresh 16-hex-digit session identity (time, process and a counter, mixed; not a secret).
+fn new_uid() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64);
+    let mut x = nanos ^ u64::from(std::process::id()).rotate_left(32) ^ COUNTER.fetch_add(1, Ordering::Relaxed).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    format!("{:016x}", x ^ (x >> 31))
 }
 
 impl Default for Session {
@@ -346,6 +362,7 @@ impl Session {
             edit: EditState::default(),
             next_id: 1,
             comments: String::new(),
+            uid: new_uid(),
             midi_originals: std::collections::BTreeMap::new(),
             pool: SourcePool::default(),
             folder: None,
@@ -515,6 +532,9 @@ impl Session {
 
     /// Repair invariants after loading untrusted data.
     pub fn sanitize(&mut self) {
+        if self.uid.is_empty() || !self.uid.bytes().all(|b| b.is_ascii_hexdigit()) || self.uid.len() > 32 {
+            self.uid = new_uid();
+        }
         let max_id = self
             .tracks
             .iter()

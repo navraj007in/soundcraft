@@ -571,8 +571,9 @@ fn write_session(session: &Session, path: &str, overwrite: bool) -> Result<(Sess
         std::fs::create_dir_all(&audio_dir).map_err(|err| EngineError::Io(format!("{}: {err}", audio_dir.display())))?;
         let mut stem = sanitize_name(&src.name);
         if overwrite {
-            // One file per source id so autosaves never collide or pile up.
-            stem = format!("{stem}_{}", src.id.0);
+            // One file per source id and content, so autosaves never pile up and a file left by
+            // another session (ids restart per session) is never mistaken for this audio.
+            stem = format!("{stem}_{}_{:016x}", src.id.0, audio_fingerprint(&audio.buffer));
             if audio_dir.join(format!("{stem}.wav")).exists() {
                 src.path = format!("Audio Files/{stem}.wav");
                 src.unsaved = false;
@@ -603,6 +604,28 @@ fn write_session(session: &Session, path: &str, overwrite: bool) -> Result<(Sess
     }
     replace_file(&tmp, &p, text.as_bytes())?;
     Ok((s, written, p))
+}
+
+/// FNV-1a over the buffer's shape and sample bits: identifies audio content for recovery files.
+fn audio_fingerprint(b: &AudioBuffer) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut eat = |v: u64| {
+        h = (h ^ v).wrapping_mul(0x0000_0100_0000_01b3);
+    };
+    eat(u64::from(b.sample_rate));
+    eat(b.channels.len() as u64);
+    for ch in &b.channels {
+        eat(ch.len() as u64);
+        for s in ch {
+            eat(u64::from(s.to_bits()));
+        }
+    }
+    h
+}
+
+/// Name of the per-session recovery folder: the session name plus its persistent identity.
+pub fn recovery_dir_name(s: &Session) -> String {
+    format!("{}-{}", sanitize_name(&s.name), s.uid)
 }
 
 /// Write `bytes` to `tmp`, flush it to disk and rename it over `file`, so `file` holds either the
@@ -1034,6 +1057,28 @@ mod record_tests {
 #[cfg(test)]
 mod save_tests {
     use super::*;
+
+    #[test]
+    fn recovery_of_same_named_sessions_keeps_each_sessions_audio() {
+        let dir = std::env::temp_dir().join(format!("soundcraft-recovery-ident-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let make = |v: f32| {
+            let mut e = Engine::default();
+            add_source(e.session_mut(), "Vocal", AudioBuffer { sample_rate: 48000, channels: vec![vec![v; 100]] }, None, FileFormat::Wav);
+            e
+        };
+        let (a, b) = (make(0.5), make(-0.25));
+        assert_ne!(recovery_dir_name(a.session()), recovery_dir_name(b.session()));
+        // Even forced into one folder, content identity keeps the audio apart.
+        let path = dir.join("Untitled.scraft").to_string_lossy().into_owned();
+        save_copy(&a, &path).unwrap();
+        save_copy(&b, &path).unwrap();
+        let mut r = Engine::default();
+        open_session(&mut r, &path).unwrap();
+        let id = r.session().sources[0].id;
+        assert_eq!(r.session().pool.get(id).unwrap().buffer.channels[0][0], -0.25);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn autosave_copy_leaves_document_untouched_and_reuses_audio() {

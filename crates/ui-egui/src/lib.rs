@@ -477,7 +477,7 @@ impl SoundApp {
     /// Arm the input for the record-enabled tracks; a session never saved records into its
     /// autosave folder.
     fn arm_recorder(&mut self) -> Result<(), String> {
-        let name = soundcraft_engine::io::sanitize_name(&self.engine.session().name);
+        let name = soundcraft_engine::io::recovery_dir_name(self.engine.session());
         let unsaved_dir = self.autosave_dir.as_ref().map_or_else(std::env::temp_dir, |d| d.join(name));
         let Some(r) = &mut self.recorder else { return Err("no audio input device".into()) };
         let plan = soundcraft_engine::io::plan_takes(&self.engine, &unsaved_dir, r.channels);
@@ -522,8 +522,8 @@ impl SoundApp {
         }
         self.last_autosave = Some(std::time::Instant::now());
         self.capture_plugin_states();
-        let name = soundcraft_engine::io::sanitize_name(&self.engine.session().name);
-        let path = dir.join(&name).join(format!("{name}.scraft"));
+        let file = soundcraft_engine::io::sanitize_name(&self.engine.session().name);
+        let path = dir.join(soundcraft_engine::io::recovery_dir_name(self.engine.session())).join(format!("{file}.scraft"));
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
