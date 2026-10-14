@@ -1,7 +1,7 @@
 # SoundCraft-AI execution plan
 
 **Implements:** [SoundCraft-AI Product Requirements v0.3](../../SoundCraft_AI_PRD_v0.3.docx) (14 October 2026)
-**Plan version:** 0.3 · **Updated:** 14 October 2026 · **Status:** Draft. Phase 0 has not started.
+**Plan version:** 0.4 · **Updated:** 14 October 2026 · **Status:** Draft. Phase 0 has not started.
 **Baseline:** fork `navraj007in/soundcraft`, `main` at `6cf896e` (the PRD's pinned 0.6.1 rebuild).
 
 This plan breaks the PRD into phases, work packages and tasks, and ties each one to the
@@ -32,7 +32,7 @@ None is runtime-qualified yet; that is Phase 0 work (PRD §3.1).
 | Disk recording | One WAV file per take, a lock-free 4-second ring, header rewritten every second, **default input device only**. | `crates/playback/src/record.rs:1-20` | Qualify it, don't rewrite it (P0-T04, P3-R*). |
 | Devices / block size | `BLOCK = 512`; `open_device` uses `default_output_device`. Device selection is already tracked as gaps.md G-01 (≈25–40 h). | `crates/playback/src/lib.rs:36`, `:714-717`; `docs/gaps.md` | Reuse the gaps.md G-01 work for FR-11 (P3-R01). |
 | Pitch | Frame-level YIN returns `Option<f32>` with no confidence. Notes are rounded to MIDI. | `crates/dsp/src/pitch_detect.rs` | A new continuous F0 tracker with confidence is needed. YIN is a baseline only (P0-T08, P1-A03). |
-| Compressed import | symphonia with `mp3`, `aac`, `isomp4` features. | `Cargo.toml:39`, `crates/audio-io` | Qualify encoder delay/padding, VBR and channel mapping (P0-T03). |
+| Compressed import | symphonia 0.5.5 with `mp3`, `aac`, `isomp4` features, `enable_gapless: true`. **Measured (P0-T03, [import-matrix.md](import-matrix.md)):** LAME-tagged MP3 and VBR are correct; **AAC keeps its start priming (+1024 or +2112 samples)**; untagged MP3 is +1104; the original compressed file's identity isn't kept on save. | `Cargo.toml:39`, `crates/audio-io/src/symph.rs:41` | Repair AAC trimming and keep source identity (P1-E07); decide untagged MP3 handling (D9). |
 | EQ / compressor | `Eq<S>` with `eq7_response` / `eq1_response`; `Compressor`. | `crates/dsp/src/plugins/eq.rs:129,306`, `dynamics.rs:59` | The response functions make EQ conformance tests cheap (P2-M01). |
 | Loudness | `LoudnessMeter` exists. True-peak support not yet checked. | `crates/dsp/src/meter.rs:141` | Use it for audition matching. Confirm the method and version, and add true-peak if missing (P1-U04). |
 | Offline render | `render_bounce(s: &Session, …)` renders from any `Session` value. | `crates/engine/src/io.rs:285` | Candidate and original can render from the same immutable snapshot (P1-U02). |
@@ -176,6 +176,7 @@ the smallest admitted operation set. Section 7 protections apply from the first 
 | P1-E04 | Capability manifest | Generated from command specs and processor parameter tables for the admitted set: command ID, parameter units, ranges, defaults, processor version, reversibility. Starts as `mix.volume` and `track.rename` only; grows per phase. | FR-02 / G03, G04 |
 | P1-E05 | Automation conflict check | Block a static parameter proposal when automation on that parameter would override it, and explain why. | FR-02 / G03 |
 | P1-E06 | Strict operation validation and scope diff | Native mixer commands are not isolated (§1): `set_grouped` changes active group members, exclusive solo clears other solos, and a missing `track` falls back to the selection. (a) **Strict parameters** for each admitted operation: an explicit `track` ID is required, a missing or unknown ID is an error (never a selection fallback), `exclusive` is forced to false, and unknown keys are rejected. (b) **Scope diff**: after staging, compare the staged session with `before` field by field. Any change outside the approved target IDs and attributes rejects the whole group with an explanation, and nothing is published. (c) In Phase 1, an operation whose diff reaches active group members is rejected and the conflict explained; whether to support group-aware scope is decision D8. Tests: grouped tracks (volume, mute, solo), exclusive solo with `solo_mode` set to `xor`, missing and unknown IDs, no `track` param with an active selection, and a changed selection between review and publish. | FR-02 / G03, G04 |
+| P1-E07 | Compressed-import repairs | From P0-T03 ([import-matrix.md](import-matrix.md)). (a) Honour the MP4 edit list and iTunSMPB so AAC-LC M4A imports with onset error ≤ 1 sample against the ffmpeg reference on the `afconvert` and ffmpeg fixtures at 44.1 and 48 kHz, mono and stereo; first check whether a symphonia update or a small local patch is simpler. (b) Keep the original compressed file's name, size and content hash in the session's source entry or the sidecar, so a source imported from MP3 or AAC still has its identity after the decoded PCM replaces it on save (PRD §4.2). (c) Report which gapless case applied (declared, untagged or unknown) in the import result. (d) Regression tests from the fixture generator, plus onset measurement after bounce on the timeline. | FR-11 / G01 |
 
 ### 5.2 Contracts and controller (companion)
 
@@ -307,7 +308,7 @@ versioned scope change is approved.
 | Gate | Evaluated in | Main tasks |
 |---|---|---|
 | G00 Early usefulness | Phase 0 | P0-D01 – P0-D06 |
-| G01 Import and persistence | P1 subset, P3 full | P0-T03, P1-C05, P1 G01 subset |
+| G01 Import and persistence | P1 subset, P3 full | P0-T03, P1-E07, P1-C05, P1 G01 subset |
 | G02 Recording | Phase 3 | P0-T04, P0-T05, P3-R01 – P3-R04, P3-R06 |
 | G02-SW Software monitoring *(optional)* | Phase 3 | P0-T05, P3-R07 |
 | G03 Intent and targeting | P1 subset, P2 full | P1-E01, P1-E04 – P1-E06, P1-M03, P2-Q04 |
@@ -331,7 +332,7 @@ versioned scope change is approved.
 | FR-03 Vocal pitch analysis | P0-T08, P1-A01, P1-A03, P1-A04, P1-I02, P2-P01 – P2-P03, P2-Q01 |
 | FR-04 Focused vocal production | P0-T09, P1-A02, P1-M01 – P1-M03, P1-U01, P1-I03, P2-M01, P2-M02 |
 | FR-10 Task history and recovery | P1-E01, P1-E02, P1-C01 – P1-C05, P1-C07 – P1-C09, P1-I05, P2-X01 |
-| FR-11 Recording and project integrity | P0-T03, P0-T04, P1-C05, P1-C08, P3-R01 – P3-R05 |
+| FR-11 Recording and project integrity | P0-T03, P0-T04, P1-E07, P1-C05, P1-C08, P3-R01 – P3-R05 |
 | FR-12 Candidate comparison and export | P1-C04, P1-U02 – P1-U06, P1-I04, P2-X01 |
 | FR-13 Job and capability management | P1-E03, P1-C06, P1-M03, P1-M04, P3-F01, P3-P01 |
 | PRD §5.3 Required surfaces | P1-I01 – P1-I06 |
@@ -351,6 +352,7 @@ versioned scope change is approved.
 | D6 | Licence and pricing model | Unresolved (open source vs open core) | Product owner | Before external distribution or a paid pilot |
 | D7 | Product name | "SoundCraft-AI" working name | Branding review | Before P3-D03 |
 | D8 | Grouped tracks in assistant edits | Phase 1 rejects any operation whose scope diff reaches active group members, and explains why. Later options: list group members as explicit targets in review, or add an engine parameter that suspends group propagation for one call | P1-E06 findings; G00/G11 feedback | Phase 2 |
+| D9 | Untagged MP3 delay | Don't guess: import as decoded (+1104 samples) and report "no gapless information" in the import result. Alternative: apply the standard 1105-sample LAME delay by default | P0-T03 finding; user feedback | Phase 1 (with P1-E07) |
 
 ## 10. Risks and triggers
 
@@ -375,3 +377,4 @@ versioned scope change is approved.
 | 0.1 | 14 October 2026 | First plan from PRD v0.3, grounded in source inspection of `6cf896e`. |
 | 0.2 | 14 October 2026 | Review fixes: strict operation validation and scope diff (P1-E06, D8); receipt store, status query and crash-case contract (P1-C07); cloud budget enforcement (P1-M04); render acceptance checks (P1-U05); guarded export (P2-X01); discovery sessions by day 21, with a frozen rule for open follow-up windows (P0-D01, D03, D05, D06). |
 | 0.3 | 14 October 2026 | Review fixes: receipts made history-only (P1-C07); saved-state evidence from a lineage marker and a content check that survives undo, redo and later edits (P1-C08); crash contract keeps unresolved outcomes as Recovery required and reads autosaves (P1-C09); the sidecar is also written by `save_copy` and autosave (P1-C05); version retention (P1-U06); export protection re-checked at final publication with atomic no-overwrite (P2-X01). |
+| 0.4 | 14 October 2026 | P0-T01 and P0-T03 results: CI passes on Rust 1.97.0 (the repository needs 1.95 or later); AAC priming not trimmed, so P1-E07 and D9 added; import and save/reopen evidence recorded in `import-matrix.md`. |
