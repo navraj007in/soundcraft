@@ -1,7 +1,7 @@
 # Spike: guarded publication and revision semantics
 
 **Task:** P0-T06 in the [execution plan](execution-plan.md) · **Feeds:** PRD §7.2, G04 · **Code:** branch `spike/guarded-publish`, `crates/engine/src/group.rs` (+ 7 lines in `lib.rs`)
-**Version:** 0.1 · **Updated:** 14 October 2026 · **Status:** Spike complete. Prototype only; not the P1-E02 implementation.
+**Version:** 0.2 · **Updated:** 15 October 2026 · **Status:** Spike complete. Prototype only; not the P1-E02 implementation.
 
 ## Questions and answers
 
@@ -101,8 +101,8 @@ postcondition verification beyond "the command returned Ok".
 | State | Where it lives | Effect on guarded publish | Handling |
 |---|---|---|---|
 | Third-party plugin live state | Audio thread; copied into the session only on save or bounce | A snapshot or a staged copy may not contain it. A snapshot swap that adds or removes a third-party insert makes the player build fresh instances (`Player::update_session` → `prepare`, `crates/playback/src/lib.rs:523`). | Keep third-party processors out of the admitted manifest (already PRD §6.2); for audition, an unqualified processor on the render path blocks audition (P1-U05(c)). |
-| `transport_requests` | `Engine` field, drained by the host each frame | A group that queued one and then failed would leave it behind. | **Fixed in the spike** (truncate on rollback). Transport commands are not in the admitted set anyway. |
-| `clipboard`, `messages` | `Engine` fields | Not restored on rollback. | Edit and clipboard commands are outside the manifest. Document as a manifest rule. |
+| `transport_requests` | `Engine` field, drained by the host each frame | A group that queued one and then failed would leave it behind. | **Fixed in the spike** (truncate on rollback). Transport commands are not admitted: `execute_group` refuses any command that is not an undoable document edit. |
+| `clipboard`, `messages`, `path`, `saved` | `Engine` fields | Restored on rollback. | Only undoable document edits are admitted, so session replacement, saving and file output cannot run in a group. |
 | Source pool and files | Session sources + disk | Import writes files; undoing the document doesn't remove them. | Import and delete stay outside the manifest (PRD §6.2). |
 | `Engine.transport.recording` | Reported back by the host each frame | The recording check is only as fresh as the last frame. | Acceptable for the spike; for P1-E02 also check `record_arm`/input monitor state on the session itself. |
 | Built-in plugin DSP state | Mixer, rebuilt from the session | Not examined here. | The determinism and initial-state tests in P1-U03 cover it. |
@@ -154,3 +154,4 @@ depends on P0-T03 (which found a repair: AAC trimming), P0-T07 and the product e
 | Version | Date | Change |
 |---|---|---|
 | 0.1 | 14 October 2026 | Spike findings (P0-T06). |
+| 0.2 | 15 October 2026 | Groups admit only undoable document edits; rollback also restores path, saved copy, clipboard and messages (audit A14). |

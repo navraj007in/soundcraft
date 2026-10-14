@@ -59,11 +59,23 @@ impl Engine {
             return Err(EngineError::BadParams("session.apply".into(), "no operations".into()));
         }
 
+        // Only reversible document edits may be grouped: a command with an effect outside the
+        // document (a file written, the session replaced or saved elsewhere, quitting) cannot be
+        // taken back, so none is admitted, and nothing runs before every operation is checked.
+        for (i, (id, _)) in ops.iter().enumerate() {
+            let bad = |why: String| EngineError::BadParams("session.apply".into(), format!("operation {} (`{id}`): {why}, nothing was applied", i + 1));
+            let Some(spec) = crate::find_command(id) else { return Err(bad("unknown command".into())) };
+            if !spec.undoable || spec.view {
+                return Err(bad("only undoable document edits can be grouped".into()));
+            }
+        }
+
         // Everything a command can change that must come back on failure. Clones are cheap: the
         // document and every history entry share their data behind an `Arc`.
         let before = Arc::clone(&self.doc);
         let (undo, redo) = (self.undo.clone(), self.redo.clone());
         let (revision, dirty, journal_len, transport_len) = (self.revision, self.dirty, self.journal.len(), self.transport_requests.len());
+        let (path, saved, clipboard, messages_len) = (self.path.clone(), Arc::clone(&self.saved), self.clipboard.clone(), self.messages.len());
 
         let mut results = Vec::with_capacity(ops.len());
         for (i, (id, params)) in ops.iter().enumerate() {
@@ -78,6 +90,10 @@ impl Engine {
                     self.dirty = dirty;
                     self.revision = revision;
                     self.merge_key = None;
+                    self.path = path;
+                    self.saved = saved;
+                    self.clipboard = clipboard;
+                    self.messages.truncate(messages_len);
                     return Err(match e {
                         EngineError::Stale(m) => EngineError::Stale(m),
                         other => EngineError::BadParams(
@@ -102,6 +118,28 @@ impl Engine {
 mod tests {
     use super::*;
     use soundcraft_model::{ChannelFormat, TrackKind};
+
+    #[test]
+    fn external_effects_and_session_replacement_are_not_admitted() {
+        let dir = std::env::temp_dir().join(format!("soundcraft-group-refuse-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("changed.scraft");
+        let mut e = Engine::default();
+        let revision = e.content_revision();
+        for first in [
+            ("session.save_as", json!({"path": path})),
+            ("session.new", json!({})),
+            ("file.bounce_mix", json!({"path": dir.join("x.wav")})),
+            ("app.quit", json!({})),
+            ("session.inspect", json!({})),
+        ] {
+            let r = e.execute_group(revision, "test", &[(first.0.to_string(), first.1.clone()), ("does.not.exist".into(), json!({}))]);
+            assert!(r.is_err(), "{}", first.0);
+            assert!(e.path.is_none(), "{}: the save path must not change", first.0);
+        }
+        assert!(!dir.exists(), "no file may be written by a refused group");
+        assert_eq!(e.content_revision(), revision);
+    }
 
     fn two_tracks() -> (Engine, soundcraft_model::TrackId, soundcraft_model::TrackId) {
         let mut e = Engine::default();
@@ -193,16 +231,14 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_group_does_not_leave_transport_requests_behind() {
+    fn transport_commands_are_not_admitted_so_a_group_never_queues_playback() {
         let (mut e, a, _) = two_tracks();
         let queued = e.transport_requests.len();
-        let ops = vec![("transport.play".to_string(), json!({})), ("mix.volume".to_string(), json!({"track": 9999, "db": 0.0}))];
-        assert!(e.execute_group(e.content_revision(), "bad", &ops).is_err());
-        assert_eq!(e.transport_requests.len(), queued, "a play request queued by an undone group would still start playback");
-        // ...and the same group, without the failing operation, does queue it (the test is not vacuous).
-        let ok = vec![("transport.play".to_string(), json!({})), ("mix.volume".to_string(), json!({"track": a.0, "db": -1.0}))];
-        e.execute_group(e.content_revision(), "ok", &ok).unwrap();
-        assert!(e.transport_requests.len() > queued);
+        let ops = vec![("transport.play".to_string(), json!({})), ("mix.volume".to_string(), json!({"track": a.0, "db": -1.0}))];
+        let err = e.execute_group(e.content_revision(), "play", &ops).unwrap_err();
+        assert!(err.to_string().contains("only undoable document edits"), "{err}");
+        assert_eq!(e.transport_requests.len(), queued);
+        assert_eq!(vol(&e, a), 0.0, "nothing ran");
     }
 
     #[test]
