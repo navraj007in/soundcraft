@@ -211,6 +211,9 @@ struct Strip {
     align: DelayLine,
     align_pre: DelayLine,
     out_extra: DelayLine,
+    /// Per-send alignment to the destination bus, and the scratch a delayed send is read from.
+    send_extra: Vec<DelayLine>,
+    sendbuf: Vec<Vec<f32>>,
     outbuf: Vec<Vec<f32>>,
 }
 
@@ -230,6 +233,11 @@ impl DelayLine {
             self.idx = 0;
             self.bufs = vec![vec![0.0; len]; ch];
         }
+    }
+    /// Forget the audio in flight (a stop, seek or session change) without reallocating.
+    fn clear(&mut self) {
+        self.bufs.iter_mut().for_each(|b| b.fill(0.0));
+        self.idx = 0;
     }
     fn process(&mut self, io: &mut [Vec<f32>], frames: usize) {
         if self.len == 0 {
@@ -264,6 +272,15 @@ struct ClipFx {
 }
 
 impl Strip {
+    /// Drop compensation audio so nothing from before a discontinuity plays after it.
+    fn clear_delays(&mut self) {
+        self.align.clear();
+        self.align_pre.clear();
+        self.out_extra.clear();
+        self.send_extra.iter_mut().for_each(DelayLine::clear);
+        self.outbuf.iter_mut().for_each(|b| b.fill(0.0));
+    }
+
     fn new() -> Self {
         Strip {
             buf: Vec::new(),
@@ -281,6 +298,8 @@ impl Strip {
             align: DelayLine::default(),
             align_pre: DelayLine::default(),
             out_extra: DelayLine::default(),
+            send_extra: Vec::new(),
+            sendbuf: Vec::new(),
             outbuf: Vec::new(),
         }
     }
@@ -309,6 +328,11 @@ pub struct MixEngine {
     /// that lines direct outputs up with aux returns stays in `latency` and is removed
     /// only from the main mix.
     track_latency: usize,
+    /// Per-bus arrival latency (samples) of the audio on it: the slowest feeder, so every route
+    /// into a bus (and into the main mix) is delayed to meet it.
+    bus_latency: HashMap<BusId, usize>,
+    /// Post-fader output latency of every live strip this block, before route alignment.
+    out_latency: HashMap<TrackId, usize>,
     /// Live input for the next block (planar), set by the audio host for input monitoring.
     pub input: Vec<Vec<f32>>,
     /// Transport stopped: only monitored inputs sound (no clips).
@@ -382,6 +406,8 @@ impl MixEngine {
             order: Vec::new(),
             latency: 0,
             track_latency: 0,
+            bus_latency: HashMap::new(),
+            out_latency: HashMap::new(),
             input: Vec::new(),
             monitor_only: false,
             recording: false,
@@ -474,6 +500,7 @@ impl MixEngine {
                 i.plugin.reset();
             }
             s.held.clear();
+            s.clear_delays();
         }
         self.meters.clear();
         self.main_meter = StripMeter::default();
@@ -576,6 +603,7 @@ impl MixEngine {
                     i.plugin.all_notes_off();
                 }
                 st.held.clear();
+                st.clear_delays();
             }
         }
         self.last_end = pos.saturating_add(frames as i64);
@@ -614,22 +642,28 @@ impl MixEngine {
             }
         });
         self.busses = busses;
-        // Delay compensation: align every strip to the slowest. Direct-to-main outputs also wait
-        // for the slowest aux return. Aux latency has to be read before those outputs are routed,
-        // or the first block (and a one-block bounce probe) still sees zero.
+        // Delay compensation over the whole routing graph. Every track is aligned to the slowest
+        // track; an aux's output then arrives later by its input's arrival plus its own inserts;
+        // every route into a bus or the main mix is delayed to meet the slowest feeder; the master
+        // inserts come last. Latencies are read before anything is routed, or the first block (and
+        // a one-block bounce probe) would still see zero.
         let pdc = s.edit.delay_compensation;
         if pdc {
-            for t in s.tracks.iter().filter(|t| is_aux(t) && !t.inactive) {
+            for t in s.tracks.iter().filter(|t| (is_aux(t) || t.kind == TrackKind::Master) && !t.inactive) {
                 if let Some(st) = self.strips.get_mut(&t.id) {
                     note_insert_latency(t, st, pos);
                 }
             }
         }
         let lmax_t = if pdc { work.iter().map(|(_, st)| st.latency).max().unwrap_or(0) } else { 0 };
-        let lmax_a =
-            if pdc { self.strips.iter().filter(|(id, _)| s.track(**id).is_some_and(is_aux)).map(|(_, st)| st.latency).max().unwrap_or(0) } else { 0 };
+        let main_in = self.plan_latency(s, &order, lmax_t, pdc, &work);
         self.track_latency = lmax_t;
-        self.latency = lmax_t + lmax_a;
+        let master_latency = if pdc {
+            s.tracks.iter().filter(|t| t.kind == TrackKind::Master && !t.inactive).filter_map(|t| self.strips.get(&t.id)).map(|st| st.latency).sum()
+        } else {
+            0
+        };
+        self.latency = main_in.saturating_add(master_latency);
         for (i, st) in work.iter_mut() {
             let Some(t) = s.tracks.get(*i) else { continue };
             let ch = st.buf.len();
@@ -639,7 +673,7 @@ impl MixEngine {
                 st.align_pre.set(lmax_t.saturating_sub(st.latency), ch);
                 st.align_pre.process(&mut st.pre, frames);
             }
-            st.out_extra.set(if t.mixer.output == Route::Main { lmax_a } else { 0 }, ch);
+            self.set_route_delays(t, st, main_in);
         }
         for (i, st) in work.iter_mut() {
             if let Some(t) = s.tracks.get(*i) {
@@ -662,9 +696,9 @@ impl MixEngine {
             let live_in = LiveInput { input: &self.input, monitor_only: self.monitor_only, recording: self.recording };
             process_strip(s, t, &mut st, &self.busses, &live_in, pos, frames, any_solo);
             let ch = st.buf.len();
-            st.align.set(if pdc { lmax_a.saturating_sub(st.latency) } else { 0 }, ch);
-            st.align.process(&mut st.buf, frames);
-            st.out_extra.set(0, ch);
+            st.align.set(0, ch);
+            st.align_pre.set(0, ch);
+            self.set_route_delays(t, &mut st, main_in);
             self.route_strip(t, &mut st, pos, frames);
             self.strips.insert(t.id, st);
         }
@@ -739,6 +773,72 @@ impl MixEngine {
         }
     }
 
+    /// Work out, in dependency order, when each strip's output and each bus's contents arrive
+    /// (`out_latency`, `bus_latency`); returns the arrival latency at the main mix. All zero
+    /// without delay compensation.
+    fn plan_latency(&mut self, s: &Session, order: &[usize], lmax_t: usize, pdc: bool, work: &[(usize, Strip)]) -> usize {
+        self.out_latency.clear();
+        self.bus_latency.clear();
+        if !pdc {
+            return 0;
+        }
+        for b in &s.busses {
+            self.bus_latency.insert(b.id, lmax_t);
+        }
+        let mut main_in = lmax_t;
+        let feed = |bus_latency: &mut HashMap<BusId, usize>, main_in: &mut usize, t: &Track, out: usize| {
+            let dests = std::iter::once(&t.mixer.output).chain(t.mixer.sends.iter().flatten().map(|sn| &sn.target));
+            for d in dests {
+                match d {
+                    Route::Main => *main_in = (*main_in).max(out),
+                    Route::Bus(b) => {
+                        let e = bus_latency.entry(*b).or_insert(lmax_t);
+                        *e = (*e).max(out);
+                    }
+                    _ => {}
+                }
+            }
+        };
+        for (i, _) in work {
+            let Some(t) = s.tracks.get(*i) else { continue };
+            self.out_latency.insert(t.id, lmax_t);
+            feed(&mut self.bus_latency, &mut main_in, t, lmax_t);
+        }
+        for t in order.iter().filter_map(|&i| s.tracks.get(i)).filter(|t| matches!(t.kind, TrackKind::Aux | TrackKind::Folder) && !t.inactive) {
+            let own = self.strips.get(&t.id).map_or(0, |st| st.latency);
+            let arrive = match &t.mixer.input {
+                Route::Bus(b) => self.bus_latency.get(b).copied().unwrap_or(lmax_t),
+                _ => lmax_t,
+            };
+            let out = arrive.saturating_add(own);
+            self.out_latency.insert(t.id, out);
+            feed(&mut self.bus_latency, &mut main_in, t, out);
+        }
+        main_in
+    }
+
+    /// Delay each of a strip's routes (its output and its sends) so it lands together with the
+    /// slowest other feeder of the same destination.
+    fn set_route_delays(&self, t: &Track, st: &mut Strip, main_in: usize) {
+        let ch = st.buf.len();
+        let out = self.out_latency.get(&t.id).copied().unwrap_or(0);
+        let gap = |d: &Route| -> usize {
+            let dest = match d {
+                Route::Main => main_in,
+                Route::Bus(b) => self.bus_latency.get(b).copied().unwrap_or(0),
+                _ => return 0,
+            };
+            dest.saturating_sub(out)
+        };
+        st.out_extra.set(gap(&t.mixer.output), ch);
+        if st.send_extra.len() < t.mixer.sends.len() {
+            st.send_extra.resize_with(t.mixer.sends.len(), DelayLine::default);
+        }
+        for (d, snd) in st.send_extra.iter_mut().zip(t.mixer.sends.iter()) {
+            d.set(snd.as_ref().map_or(0, |sn| gap(&sn.target)), ch);
+        }
+    }
+
     /// Send, meter and pan a processed strip into the busses / main mix.
     fn route_strip(&mut self, t: &Track, strip: &mut Strip, pos: Samples, frames: usize) {
         self.meters.entry(t.id).or_default().measure(&strip.buf, frames, strip.gr);
@@ -751,12 +851,28 @@ impl MixEngine {
             }
             let lvl = send_level(t, i, snd.level_db, pos);
             let gain = db_to_gain(lvl);
-            let src = if snd.pre_fader { &strip.pre } else { &strip.buf };
             let Route::Bus(b) = &snd.target else { continue };
-            let Some(dst) = self.busses.get_mut(b) else { continue };
-            if gain <= 0.0 {
+            if gain <= 0.0 || !self.busses.contains_key(b) {
                 continue;
             }
+            let delay = strip.send_extra.get_mut(i).filter(|d| d.len > 0);
+            let src: &Vec<Vec<f32>> = if let Some(d) = delay {
+                let from = if snd.pre_fader { &strip.pre } else { &strip.buf };
+                if strip.sendbuf.len() != from.len() {
+                    strip.sendbuf = vec![Vec::new(); from.len()];
+                }
+                for (c, f) in strip.sendbuf.iter_mut().zip(from.iter()) {
+                    c.clear();
+                    c.extend_from_slice(f.get(..frames).unwrap_or(&[]));
+                }
+                d.process(&mut strip.sendbuf, frames);
+                &strip.sendbuf
+            } else if snd.pre_fader {
+                &strip.pre
+            } else {
+                &strip.buf
+            };
+            let Some(dst) = self.busses.get_mut(b) else { continue };
             // Mono sends use the send's own pan; stereo sends go straight to L/R.
             let stereo = if src.len() == 1 { [snd.pan, 0.0] } else { [-1.0, 1.0] };
             let surround = snd.surround.as_ref().or(if snd.follow_main_pan { t.mixer.surround.as_ref() } else { None });
@@ -765,7 +881,7 @@ impl MixEngine {
         }
         let spec = PanSpec { stereo: [pan_at(t, 0, pos), pan_at(t, 1, pos)], surround: t.mixer.surround.as_ref() };
         match &t.mixer.output {
-            Route::Main if strip.out_extra.len > 0 => {
+            Route::Main | Route::Bus(_) if strip.out_extra.len > 0 => {
                 if strip.outbuf.len() != strip.buf.len() {
                     strip.outbuf = vec![Vec::new(); strip.buf.len()];
                 }
@@ -1973,8 +2089,108 @@ mod audio_thread_tests {
 mod tests {
     use super::*;
     use soundcraft_audio_io::AudioBuffer;
-    use soundcraft_model::{Insert, SourceAudio, SourceId};
+    use soundcraft_model::{ClipId, Insert, SourceAudio, SourceId};
     use std::sync::Arc;
+
+    fn impulse_session() -> (Session, TrackId) {
+        let mut s = Session::default();
+        let t = s.add_track(TrackKind::Audio, ChannelFormat::Mono, None);
+        let mut impulses = vec![0.0; 2048];
+        for i in [0, 1024, 2000] {
+            impulses[i] = 0.25;
+        }
+        s.pool.insert(SourceId(100), Arc::new(SourceAudio::new(AudioBuffer { sample_rate: 48000, channels: vec![impulses] })));
+        s.track_mut(t).unwrap().playlist_mut().unwrap().clips.push(Clip::audio(ClipId(101), "imp", SourceId(100), 0, 0, 2048));
+        (s, t)
+    }
+
+    fn impulse_positions(s: &Session) -> Vec<usize> {
+        render_range(s, Range::new(0, 2048), 512)[0].iter().enumerate().filter(|(_, x)| x.abs() > 1e-4).map(|(i, _)| i).collect()
+    }
+
+    fn lookahead_compressor() -> Insert {
+        let mut c = Insert::new("compressor");
+        c.params.insert("lookahead".into(), 5.0);
+        c.params.insert("ratio".into(), 1.0);
+        c
+    }
+
+    #[test]
+    fn master_insert_latency_is_removed_from_a_bounce() {
+        let (mut s, _) = impulse_session();
+        assert_eq!(impulse_positions(&s), vec![0, 1024, 2000]);
+        let m = s.add_track(TrackKind::Master, ChannelFormat::Stereo, None);
+        s.track_mut(m).unwrap().mixer.inserts[0] = Some(lookahead_compressor());
+        assert_eq!(impulse_positions(&s), vec![0, 1024, 2000]);
+    }
+
+    #[test]
+    fn serial_aux_latency_accumulates_and_is_removed_from_a_bounce() {
+        let (mut s, t) = impulse_session();
+        let b1 = s.add_bus("B1", ChannelFormat::Stereo);
+        let b2 = s.add_bus("B2", ChannelFormat::Stereo);
+        let a1 = s.add_track(TrackKind::Aux, ChannelFormat::Stereo, Some("Aux1"));
+        let a2 = s.add_track(TrackKind::Aux, ChannelFormat::Stereo, Some("Aux2"));
+        s.track_mut(t).unwrap().mixer.output = Route::Bus(b1);
+        s.track_mut(a1).unwrap().mixer.input = Route::Bus(b1);
+        s.track_mut(a1).unwrap().mixer.output = Route::Bus(b2);
+        s.track_mut(a2).unwrap().mixer.input = Route::Bus(b2);
+        for a in [a1, a2] {
+            s.track_mut(a).unwrap().mixer.inserts[0] = Some(lookahead_compressor());
+        }
+        assert_eq!(impulse_positions(&s), vec![0, 1024, 2000]);
+    }
+
+    #[test]
+    fn a_direct_track_lines_up_with_a_serial_aux_chain() {
+        let (mut s, _) = impulse_session();
+        let direct = s.add_track(TrackKind::Audio, ChannelFormat::Mono, None);
+        s.track_mut(direct).unwrap().playlist_mut().unwrap().clips.push(Clip::audio(ClipId(102), "imp", SourceId(100), 0, 0, 2048));
+        let b1 = s.add_bus("B1", ChannelFormat::Stereo);
+        let b2 = s.add_bus("B2", ChannelFormat::Stereo);
+        let a1 = s.add_track(TrackKind::Aux, ChannelFormat::Stereo, Some("Aux1"));
+        let a2 = s.add_track(TrackKind::Aux, ChannelFormat::Stereo, Some("Aux2"));
+        s.tracks[0].mixer.output = Route::Bus(b1);
+        s.track_mut(a1).unwrap().mixer.input = Route::Bus(b1);
+        s.track_mut(a1).unwrap().mixer.output = Route::Bus(b2);
+        s.track_mut(a2).unwrap().mixer.input = Route::Bus(b2);
+        for a in [a1, a2] {
+            s.track_mut(a).unwrap().mixer.inserts[0] = Some(lookahead_compressor());
+        }
+        // Both tracks carry the same impulses; every copy must land on the same samples.
+        assert_eq!(impulse_positions(&s), vec![0, 1024, 2000]);
+    }
+
+    #[test]
+    fn reset_clears_audio_held_in_compensation_delays() {
+        let mut s = Session::default();
+        let dry = s.add_track(TrackKind::Audio, ChannelFormat::Mono, None);
+        let latent = s.add_track(TrackKind::Audio, ChannelFormat::Mono, None);
+        s.pool.insert(SourceId(100), Arc::new(SourceAudio::new(AudioBuffer { sample_rate: 48000, channels: vec![vec![0.5; 512]] })));
+        s.track_mut(dry).unwrap().playlist_mut().unwrap().clips.push(Clip::audio(ClipId(101), "old", SourceId(100), 0, 0, 512));
+        s.track_mut(latent).unwrap().mixer.inserts[0] = Some(lookahead_compressor());
+        let mut m = MixEngine::new(48000., 512);
+        let mut out = vec![vec![0.; 512]; 2];
+        m.render(&s, 0, 512, &mut out);
+        m.reset();
+        m.render(&s, 4096, 512, &mut out);
+        assert_eq!(out[0].iter().filter(|x| x.abs() > 0.1).count(), 0);
+    }
+
+    #[test]
+    fn a_seek_clears_audio_held_in_compensation_delays() {
+        let mut s = Session::default();
+        let dry = s.add_track(TrackKind::Audio, ChannelFormat::Mono, None);
+        let latent = s.add_track(TrackKind::Audio, ChannelFormat::Mono, None);
+        s.pool.insert(SourceId(100), Arc::new(SourceAudio::new(AudioBuffer { sample_rate: 48000, channels: vec![vec![0.5; 512]] })));
+        s.track_mut(dry).unwrap().playlist_mut().unwrap().clips.push(Clip::audio(ClipId(101), "old", SourceId(100), 0, 0, 512));
+        s.track_mut(latent).unwrap().mixer.inserts[0] = Some(lookahead_compressor());
+        let mut m = MixEngine::new(48000., 512);
+        let mut out = vec![vec![0.; 512]; 2];
+        m.render(&s, 0, 512, &mut out);
+        m.render(&s, 4096, 512, &mut out);
+        assert_eq!(out[0].iter().filter(|x| x.abs() > 0.1).count(), 0);
+    }
 
     fn synth_session(level_db: f32) -> Session {
         use soundcraft_midi::{Note, Sequence};
