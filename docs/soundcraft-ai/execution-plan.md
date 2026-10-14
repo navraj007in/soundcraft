@@ -1,7 +1,7 @@
 # SoundCraft-AI execution plan
 
 **Implements:** [SoundCraft-AI Product Requirements v0.3](../../SoundCraft_AI_PRD_v0.3.docx) (14 October 2026)
-**Plan version:** 0.10 · **Updated:** 14 October 2026 · **Status:** Draft. Phase 0 has not started.
+**Plan version:** 0.11 · **Updated:** 14 October 2026 · **Status:** Draft. Phase 0 has not started.
 **Baseline:** fork `navraj007in/soundcraft`, `main` at `6cf896e` (the PRD's pinned 0.6.1 rebuild).
 
 This plan breaks the PRD into phases, work packages and tasks, and ties each one to the
@@ -117,7 +117,7 @@ investigation list now rather than overrunning.
 
 | ID | Task | Output | Week |
 |---|---|---|---|
-| P0-D01 | Freeze the G00 go criteria from PRD §12.4 *before* collecting outcomes: ≥6 completed sessions; ≥⅔ can explain the difference between measured pitch, nearest degree and intended-note error; ≥⅔ keep a candidate; ≥½ return a second recording within 7 days. Round counts up. Also freeze the follow-up rule: a participant whose 7-day window has not closed by the scoring date is **inconclusive** for the return-use criterion, counted neither as returning nor as not returning. If fewer than 6 participants have a closed window, the return-use criterion is inconclusive. | [`discovery/g00-protocol.md`](discovery/g00-protocol.md) (draft, to be approved and dated) | 1 |
+| P0-D01 | Freeze the G00 go criteria from PRD §12.4 *before* collecting outcomes: ≥6 completed sessions; ≥⅔ can explain the difference between measured pitch, nearest degree and intended-note error; ≥⅔ keep a candidate; ≥½ return a second recording within 7 days. Round counts up. Also freeze the follow-up rule: a participant whose 7-day window has not closed by the scoring date is **inconclusive** for the return-use criterion, counted neither as returning nor as not returning. If fewer than 6 participants have a closed window, the return-use criterion is inconclusive. | [`discovery/g00-protocol.md`](discovery/g00-protocol.md) (**approved as written, 14 October 2026; criteria frozen**; the start date, capacity, host and names in its §10 are still to be filled in) | 1 |
 | P0-D02 | Consent and data handling: permitted uses, deletion arrangements, no training use without separate consent. Input/output manifest template (PRD §7.1). | [`discovery/g00-consent-form.md`](discovery/g00-consent-form.md) (draft); the manifest template is Appendix A of the protocol | 1 |
 | P0-D03 | Recruit 6–8 independent vocalists, including low-register singers and people with no MIDI melody. Recruiting starts on day 1 and the roster closes by day 10, so sessions fit before day 21. | Roster (pseudonymous) | 1–2 |
 | P0-D04 | Preparation tooling on **copies** of audio (no session mutation): (a) a continuous-F0 dump plus a Sa-relative cents plot with uncertainty; (b) selected-note statistics; (c) level-matched gain/EQ/compression previews rendered with `soundcraft-cli run --cmd … --bounce`. Log every manual step and how long it took. | `tools/discovery/` scripts; preparation log | 1–2 |
@@ -386,3 +386,4 @@ versioned scope change is approved.
 | 0.8 | 14 October 2026 | P0-T10: companion language decided (Rust, D1 closed); resource measurements (YIN over 60 s: 2.8 s and 48 MiB; the 8 × 10 min stereo envelope: about 2.0 to 2.3 GiB in the engine process); licence inventory (symphonia is MPL-2.0, so D10); model and runtime options with code licences read from the repositories; packaging plan. Findings in `packaging-and-dependencies.md`. |
 | 0.9 | 14 October 2026 | Drafted the G00 protocol (criteria, count rules, rubric, decision rules, manifest) and consent form for P0-D01 and P0-D02. Both await your approval; nothing is frozen yet. |
 | 0.10 | 14 October 2026 | Phase 0 technical tasks finished as far as they can go without hardware or data: P0-T01 (all CI steps pass on the inspection host), P0-T04 (recorder writer path measured), P0-T05 software half (device list, callback sizes), P0-T08 scoring harness (`crates/pitch-eval`). Remaining: M1 run, interface and loopback, annotated recordings and the pYIN-style tracker. |
+| 0.11 | 14 October 2026 | G00 protocol approved as written (P0-D01): criteria, rubric and decision rules frozen. Still open before day 1: the start date and capacity record, and the consent form's blanks and approval. |

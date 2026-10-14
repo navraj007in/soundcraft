@@ -1,7 +1,7 @@
-# G00 early-usefulness protocol (DRAFT for approval)
+# G00 early-usefulness protocol (approved; criteria frozen)
 
 **Tasks:** P0-D01 (criteria), P0-D03 to P0-D06 in the [execution plan](../execution-plan.md) · **Spec:** PRD v0.3 §12.4, §13.1 · **Consent:** [g00-consent-form.md](g00-consent-form.md)
-**Version:** 0.1 DRAFT · **Drafted:** 14 October 2026 · **Status:** Not approved. **Nothing in §3 is frozen until the approver signs the box in §10, and that must happen before the first session.**
+**Version:** 1.0 · **Drafted:** 14 October 2026 · **Approved as written:** 14 October 2026 · **Status:** **Approved. The criteria in §3, the scoring rubric in §5.3 and the decision rules in §8 are frozen.** The start date, weekly availability, reference host and names in §10 are still to be filled in, and that must happen before day 1. The consent form is a separate document and is not yet approved.
 
 Items in [square brackets] are blanks for you to fill. Items marked **[proposed]** are my choices where the PRD is silent; they are the ones to review hardest. The PRD's own wording is quoted or cited, never altered.
 
@@ -30,7 +30,7 @@ working session is changed. A developer may prepare outputs by hand; that is all
 A session held after day 21 is still run if it is useful, but the return-use result for that
 participant will be unresolved at scoring and is treated under §3.4.
 
-## 3. Go criteria, to be frozen before any outcome is collected
+## 3. Go criteria, frozen before any outcome is collected (approved 14 October 2026)
 
 These restate PRD §12.4. The count rules are mine **[proposed]** and are what the PRD means by
 "round required participant counts upwards".
@@ -229,9 +229,17 @@ The decision memo is dated and issued on day 28. It does not extend the study si
 | Weekly availability (hours) | [hours per week; the plan caps Phase 0 at 40 engineering hours in total] |
 | Reference host | [Apple M1, 16 GB, macOS build, free disk] |
 | Researcher(s) and second scorer | [names or codes] |
-| Approver | [name] |
-| Criteria in §3 frozen, with the rules in §3.3, §3.4 and §8.2 | ☐ approved as written ☐ approved with these changes: [ ] |
-| Signature and date | [ ] |
+| Approver | [name to be entered; approval was given in the working session on 14 October 2026] |
+| Criteria in §3 frozen, with the rules in §3.3, §3.4 and §8.2 | ☒ approved as written, 14 October 2026 ☐ approved with these changes |
+| Signature and date | [signature to be added]; approval recorded 14 October 2026 |
+
+### Change control for the frozen sections
+
+§3 (criteria and count rules), §5.3 (the understanding rubric), §3.4 and §8 (decision rules) may not change
+after the first outcome is collected. Before that, a change needs a new protocol version and a new dated
+approval, recorded in the revision history below. Any change after outcomes exist is a new, separate
+experiment and is reported as such; it never rescues a result. Anything else (wording, logistics, the
+consent form) can change with a note in the revision history.
 
 ## Appendix A: per-participant manifest (also the PRD §7.1 input/output manifest)
 
@@ -265,3 +273,4 @@ The decision memo is dated and issued on day 28. It does not extend the study si
 | Version | Date | Change |
 |---|---|---|
 | 0.1 | 14 October 2026 | Draft protocol for P0-D01 to D06. Not approved. |
+| 1.0 | 14 October 2026 | Approved as written. Criteria, rubric and decision rules frozen. Blanks in §10 remain. |
