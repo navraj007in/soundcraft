@@ -1,6 +1,6 @@
 //! The Edit window: toolbar, rulers, track headers and playlists.
 
-use crate::theme::{Tokens, bold, clip_roles, medium, regular, rgb};
+use crate::theme::{Tokens, bold, clip_roles, medium, mono, regular, rgb};
 use crate::widgets::{rec_toggle, selector_box, text_toggle};
 use crate::{Gesture, SoundApp, icons, toolbar};
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
@@ -794,22 +794,21 @@ fn track_header(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect, sele
         click_track(app, id, ui.input(|i| i.modifiers), in_edit_window);
     }
     bg.context_menu(|ui| track_context_menu(app, ui, id));
-    // Name field.
-    let name_r = Rect::from_min_size(pos2(x0, head.min.y + 4.0), vec2(150.0, 17.0));
-    ui.painter().rect(
-        name_r,
-        CornerRadius::same(2),
-        if selected { t.name_field_sel } else { t.name_field },
-        Stroke::new(1.0, Color32::from_rgb(20, 20, 20)),
-        StrokeKind::Inside,
-    );
+    // Name: no box, the design sets it as plain bold text with the track number before it.
+    let name_r = Rect::from_min_size(pos2(x0, head.min.y + 5.0), vec2(84.0, 20.0));
     let shown_name = if app.engine.session().edit.flag("edit_view.track_number") {
         let n = app.engine.session().track_index(id).map_or(0, |i| i + 1);
         format!("{n}  {}", track.name)
     } else {
         track.name.clone()
     };
-    ui.painter().with_clip_rect(name_r).text(name_r.center(), Align2::CENTER_CENTER, &shown_name, bold(12.0), t.text);
+    ui.painter().with_clip_rect(name_r).text(
+        pos2(name_r.min.x, name_r.center().y),
+        Align2::LEFT_CENTER,
+        &shown_name,
+        bold(13.0),
+        if selected { t.accent } else { t.text },
+    );
     let nresp = ui.interact(name_r, ui.id().with(("name", id.0)), Sense::click_and_drag());
     if nresp.double_clicked() {
         app.dialogs.open_rename_track(id, &track.name);
@@ -848,7 +847,7 @@ fn track_header(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect, sele
         }
     }
     // Playlist selector arrow.
-    let pl_r = Rect::from_min_size(pos2(name_r.max.x + 3.0, name_r.min.y), vec2(16.0, 17.0));
+    let pl_r = Rect::from_min_size(pos2(name_r.max.x + 2.0, name_r.min.y), vec2(14.0, 20.0));
     icons::draw(ui.painter(), pl_r.shrink(3.0), "triangle_down", t.text);
     let presp = ui.interact(pl_r, ui.id().with(("pl", id.0)), Sense::click());
     egui::Popup::menu(&presp).show(|ui| {
@@ -869,7 +868,7 @@ fn track_header(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect, sele
         }
     });
     if track.is_folder() {
-        let fr = Rect::from_min_size(pos2(head.min.x + 6.0, name_r.min.y), vec2(10.0, 17.0));
+        let fr = Rect::from_min_size(pos2(head.min.x + 1.0, name_r.min.y), vec2(10.0, 20.0));
         icons::draw(ui.painter(), fr, if track.folder_open { "triangle_down" } else { "triangle_right" }, t.text);
         if ui.interact(fr, ui.id().with(("fold", id.0)), Sense::click()).clicked() {
             let _ = app.run("track.folder_toggle", json!({"track": id.0}));
@@ -899,26 +898,24 @@ fn track_header(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect, sele
     if h < 30.0 {
         return;
     }
-    // Buttons row.
+    // Record, solo and mute sit at the right of the name row.
+    let m = &track.mixer;
+    let bs = vec2(24.0, 20.0);
+    let has_rec = track.kind.has_playlist();
+    let has_solo_mute = track.kind != TrackKind::Master;
+    let count = usize::from(has_rec) + if has_solo_mute { 2 } else { 0 };
+    let right = head.max.x - 22.0;
+    let row_w = count as f32 * bs.x + count.saturating_sub(1) as f32 * 3.0;
     let mut child = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(Rect::from_min_size(pos2(x0, name_r.max.y + 5.0), vec2(170.0, 20.0)))
+            .max_rect(Rect::from_min_size(pos2(right - row_w, head.min.y + 5.0), vec2(row_w + 1.0, bs.y)))
             .layout(egui::Layout::left_to_right(egui::Align::Min)),
     );
-    child.spacing_mut().item_spacing.x = 4.0;
-    let m = &track.mixer;
-    let bs = vec2(26.0, 18.0);
-    if track.kind.has_playlist() {
-        if rec_toggle(&mut child, bs, m.record_arm, "Record enable").clicked() {
-            let _ = app.run("mix.record_arm", json!({"track": id.0}));
-        }
-        if text_toggle(&mut child, bs, "I", m.input_monitor, t.input, "Input monitoring").clicked() {
-            let _ = app.run("mix.input_monitor", json!({"track": id.0}));
-        }
-    } else {
-        child.add_space(bs.x * 2.0 + 4.0);
+    child.spacing_mut().item_spacing.x = 3.0;
+    if has_rec && rec_toggle(&mut child, bs, m.record_arm, "Record enable").clicked() {
+        let _ = app.run("mix.record_arm", json!({"track": id.0}));
     }
-    if track.kind != TrackKind::Master {
+    if has_solo_mute {
         if text_toggle(&mut child, bs, "S", m.solo, t.solo, "Solo").clicked() {
             let _ = app.run("mix.solo", json!({"track": id.0}));
         }
@@ -926,16 +923,58 @@ fn track_header(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect, sele
             let _ = app.run("mix.mute", json!({"track": id.0}));
         }
     }
-    if h < 60.0 {
+    // Inline header meter.
+    let md = app.meters.get(&id).copied().unwrap_or_default();
+    let mr = Rect::from_min_max(pos2(head.max.x - 16.0, head.min.y + 4.0), pos2(head.max.x - 6.0, head.max.y - 4.0));
+    if track.channels() >= 2 {
+        let w = mr.width() / 2.0 - 0.5;
+        crate::widgets::meter(ui, Rect::from_min_size(mr.min, vec2(w, mr.height())), md.level[0], md.hold[0], md.clip);
+        crate::widgets::meter(ui, Rect::from_min_size(pos2(mr.min.x + w + 1.0, mr.min.y), vec2(w, mr.height())), md.level[1], md.hold[1], md.clip);
+    } else {
+        crate::widgets::meter(ui, mr, md.level[0], md.hold[0], md.clip);
+    }
+    if h < 44.0 {
         return;
     }
-    // View selector.
-    let view_r = Rect::from_min_size(pos2(x0, head.min.y + 49.0), vec2(118.0, 16.0));
+    // Pan knob, horizontal fader and its value.
+    let row2 = head.min.y + 30.0;
+    let mut fx = x0;
+    if !m.pan.is_empty() && track.kind != TrackKind::Vca {
+        let kr = Rect::from_min_size(pos2(fx, row2), vec2(20.0, 20.0));
+        let mut kc = ui.new_child(egui::UiBuilder::new().max_rect(kr));
+        let before = m.pan[0];
+        let mut v = before;
+        crate::widgets::pan_knob(&mut kc, 20.0, &mut v, "Pan (drag; double-click centres)");
+        if (v - before).abs() > f32::EPSILON {
+            let _ = app.engine.execute_merged("mix.pan", &json!({"track": id.0, "pan": v, "index": 0}), &format!("pan:{}:0", id.0));
+        }
+        fx += 26.0;
+    }
+    let value_w = 40.0;
+    let fr = Rect::from_min_max(pos2(fx, row2), pos2(right - value_w, row2 + 20.0));
+    if let Some(db) = crate::widgets::hfader(ui, fr, m.volume_db, ui.id().with(("hfader", id.0))) {
+        app.gesture = Some(crate::Gesture::Fader { track: id, start_db: m.volume_db });
+        let _ = app.engine.execute_merged("mix.volume", &json!({"track": id.0, "db": db}), &format!("fader:{}", id.0));
+    }
+    ui.painter().text(pos2(right, row2 + 10.0), Align2::RIGHT_CENTER, crate::widgets::db_text(m.volume_db), mono(11.0), t.text);
+    if h < 70.0 {
+        return;
+    }
+    // Chips: input monitor, view, automation mode, inserts.
+    let row3 = head.min.y + 55.0;
+    let mut cx = x0;
+    if has_rec {
+        let mut ic = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(pos2(cx, row3), vec2(20.0, 16.0))));
+        if text_toggle(&mut ic, vec2(20.0, 16.0), "I", m.input_monitor, t.input, "Input monitoring").clicked() {
+            let _ = app.run("mix.input_monitor", json!({"track": id.0}));
+        }
+        cx += 24.0;
+    }
+    let view_r = Rect::from_min_size(pos2(cx, row3), vec2(66.0, 16.0));
     let mut c2 = ui.new_child(egui::UiBuilder::new().max_rect(view_r));
     let vresp = selector_box(&mut c2, view_r.width(), view_r.height(), &view_label(&track.view), t.text);
     egui::Popup::menu(&vresp).show(|ui| view_menu(app, ui, track));
-    // Automation mode.
-    let am_r = Rect::from_min_size(pos2(x0, head.min.y + 68.0), vec2(118.0, 16.0));
+    let am_r = Rect::from_min_size(pos2(view_r.max.x + 4.0, row3), vec2(58.0, 16.0));
     let mode = m.automation_mode;
     let col = match mode {
         soundcraft_model::AutomationMode::Read => t.auto_read,
@@ -953,23 +992,10 @@ fn track_header(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect, sele
             }
         }
     });
-    // Inline header meter.
-    let md = app.meters.get(&id).copied().unwrap_or_default();
-    let mr = Rect::from_min_max(pos2(head.max.x - 16.0, head.min.y + 4.0), pos2(head.max.x - 6.0, head.max.y - 4.0));
-    if track.channels() >= 2 {
-        let w = mr.width() / 2.0 - 0.5;
-        crate::widgets::meter(ui, Rect::from_min_size(mr.min, vec2(w, mr.height())), md.level[0], md.hold[0], md.clip);
-        crate::widgets::meter(ui, Rect::from_min_size(pos2(mr.min.x + w + 1.0, mr.min.y), vec2(w, mr.height())), md.level[1], md.hold[1], md.clip);
-    } else {
-        crate::widgets::meter(ui, mr, md.level[0], md.hold[0], md.clip);
-    }
-    // Volume readout and inserts summary.
-    let info = format!("vol {}  pan {}", crate::widgets::db_text(m.volume_db), m.pan.first().map_or("-".into(), |p| crate::widgets::pan_text(*p)));
-    ui.painter().text(pos2(view_r.max.x + 8.0, view_r.center().y), Align2::LEFT_CENTER, info, regular(10.0), t.text_dim);
     let ins: Vec<&str> = m.inserts.iter().flatten().filter_map(|i| soundcraft_dsp::plugin_info(&i.plugin).map(|p| p.short_name)).collect();
-    if !ins.is_empty() {
-        ui.painter().with_clip_rect(Rect::from_min_max(pos2(am_r.max.x + 6.0, am_r.min.y), pos2(head.max.x - 20.0, am_r.max.y))).text(
-            pos2(am_r.max.x + 8.0, am_r.center().y),
+    if !ins.is_empty() && am_r.max.x + 8.0 < right {
+        ui.painter().with_clip_rect(Rect::from_min_max(pos2(am_r.max.x + 4.0, row3), pos2(right, row3 + 16.0))).text(
+            pos2(am_r.max.x + 6.0, row3 + 8.0),
             Align2::LEFT_CENTER,
             ins.join(" · "),
             regular(10.0),
@@ -2173,8 +2199,12 @@ mod tests {
     }
 
     fn insertion_rows(h: &Harness<SoundApp>) -> Vec<usize> {
+        // Only the lanes: the track headers reuse the same light colour (the pan knob's pointer).
+        let lanes_x = timeline(h).min.x;
         painted_rows(h, |shape| match shape {
-            Shape::LineSegment { points, stroke } if stroke.color == Tokens::current().insertion => Some((points[0].y + points[1].y) / 2.0),
+            Shape::LineSegment { points, stroke } if stroke.color == Tokens::current().insertion && points[0].x >= lanes_x => {
+                Some((points[0].y + points[1].y) / 2.0)
+            }
             _ => None,
         })
     }

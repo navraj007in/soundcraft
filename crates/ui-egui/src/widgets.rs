@@ -233,6 +233,33 @@ pub fn fader(ui: &mut Ui, r: Rect, db: f32, id: egui::Id) -> Option<f32> {
     None
 }
 
+/// A compact horizontal fader for track headers: a slot, a unity tick and a thumb. Returns the new dB
+/// value when dragged (Ctrl/Cmd for fine steps); double-click returns to 0 dB. Same law as [`fader`].
+pub fn hfader(ui: &mut Ui, r: Rect, db: f32, id: egui::Id) -> Option<f32> {
+    let t = Tokens::current();
+    let resp = ui.interact(r, id, Sense::click_and_drag());
+    let slot = Rect::from_center_size(r.center(), vec2((r.width() - 10.0).max(1.0), 4.0));
+    let p = ui.painter();
+    p.rect_filled(slot, 2.0, t.fader_track);
+    let x_at = |pos: f32| slot.min.x + slot.width() * pos;
+    let unity = x_at(soundcraft_model::fader_db_to_pos(0.0));
+    p.line_segment([pos2(unity, slot.min.y - 3.0), pos2(unity, slot.max.y + 3.0)], Stroke::new(1.0, t.text_dim));
+    let pos = soundcraft_model::fader_db_to_pos(db);
+    let thumb = Rect::from_center_size(pos2(x_at(pos), r.center().y), vec2(8.0, (r.height() - 2.0).min(14.0)));
+    let edge = if resp.hovered() || resp.dragged() { t.accent } else { t.button_border };
+    p.rect(thumb, CornerRadius::same(2), t.button_hi, Stroke::new(1.0, edge), StrokeKind::Inside);
+    p.line_segment([pos2(thumb.center().x, thumb.min.y + 3.0), pos2(thumb.center().x, thumb.max.y - 3.0)], Stroke::new(1.0, t.text_dim));
+    if resp.double_clicked() {
+        return Some(0.0);
+    }
+    if resp.dragged() {
+        let fine = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+        let dx = resp.drag_delta().x / slot.width().max(1.0) * if fine { 0.1 } else { 1.0 };
+        return Some(soundcraft_model::fader_pos_to_db((pos + dx).clamp(0.0, 1.0)).clamp(-144.0, 12.0));
+    }
+    None
+}
+
 pub fn db_text(db: f32) -> String {
     if db <= -143.9 { "-inf".into() } else { format!("{db:.1}") }
 }
