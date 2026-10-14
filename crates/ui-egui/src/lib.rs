@@ -576,6 +576,21 @@ impl SoundApp {
         }
     }
 
+    /// While recording, surface a failed take immediately: stop (keeping what was written) and say
+    /// why; input lost to a slow disk is flagged as it happens.
+    fn watch_recorder(&mut self) {
+        if !self.engine.transport.recording {
+            return;
+        }
+        let Some(status) = self.recorder.as_ref().map(soundcraft_playback::record::Recorder::status) else { return };
+        if let Some(fault) = status.fault {
+            self.stop_play();
+            self.ui.status = format!("Recording stopped: {fault}. Takes recorded so far were kept.");
+        } else if status.lost_ms > 0 {
+            self.ui.status = format!("Recording is losing input: {} ms lost, the disk is too slow", status.lost_ms);
+        }
+    }
+
     fn finish_recording(&mut self) {
         self.engine.transport.recording = false;
         if let Some(p) = &self.player {
@@ -828,6 +843,7 @@ impl SoundApp {
             }
         }
         self.write_automation(ctx);
+        self.watch_recorder();
         self.autosave();
         if self.recorder.is_none()
             && !self.recorder_failed

@@ -62,6 +62,8 @@ struct Shared {
     ring: CaptureRing,
     /// Samples lost while the ring was full.
     dropped: AtomicUsize,
+    /// First write failure of any take, published by the writer thread as it happens.
+    fault: Mutex<Option<String>>,
 }
 
 impl Shared {
@@ -73,6 +75,15 @@ impl Shared {
         *owed = owed.saturating_add(data.len() - kept);
         self.dropped.fetch_add(data.len() - kept, Ordering::Relaxed);
     }
+}
+
+/// Health of a recording in progress (see [`Recorder::status`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecorderStatus {
+    /// A take's file could not be written; that take has stopped growing (what it holds is kept).
+    pub fault: Option<String>,
+    /// Milliseconds of input lost so far because the disk could not keep up.
+    pub lost_ms: usize,
 }
 
 pub struct Recorder {
@@ -103,7 +114,7 @@ impl Recorder {
         let config = cfg.config();
         let channels = usize::from(config.channels).max(1);
         let ring = CaptureRing::new((config.sample_rate.0 as usize).saturating_mul(channels * RING_SECONDS).min(1 << 25));
-        let shared = Arc::new(Shared { armed: AtomicBool::new(false), ring, dropped: AtomicUsize::new(0) });
+        let shared = Arc::new(Shared { armed: AtomicBool::new(false), ring, dropped: AtomicUsize::new(0), fault: Mutex::new(None) });
         let sh = Arc::clone(&shared);
         let monitor = InputRing::new(usize::from(config.channels), config.sample_rate.0);
         let mon = Arc::clone(&monitor);
@@ -145,6 +156,9 @@ impl Recorder {
         }
         let takes =
             takes.into_iter().map(|(id, inputs, path)| TakeWriter::create(id, inputs, path, self.sample_rate)).collect::<Result<Vec<_>, _>>()?;
+        if let Ok(mut f) = self.shared.fault.lock() {
+            *f = None;
+        }
         let ring = &self.shared.ring;
         ring.tail.store(ring.head.load(Ordering::Acquire), Ordering::Release);
         self.shared.armed.store(true, Ordering::Release);
@@ -157,6 +171,14 @@ impl Recorder {
             }
         }
         Ok(())
+    }
+
+    /// Live health of the recording: poll while recording to stop or flag a failed take at once
+    /// rather than discovering it at stop.
+    pub fn status(&self) -> RecorderStatus {
+        let fault = self.shared.fault.lock().ok().and_then(|f| f.clone());
+        let lost = self.shared.dropped.load(Ordering::Relaxed) / self.channels.max(1);
+        RecorderStatus { fault, lost_ms: lost.saturating_mul(1000) / self.sample_rate.max(1) as usize }
     }
 
     pub fn finish(&mut self) -> Takes {
@@ -175,6 +197,14 @@ impl Drop for Recorder {
     }
 }
 
+fn publish_fault(shared: &Shared, takes: &[TakeWriter]) {
+    if let Some(e) = takes.iter().find_map(|t| t.error.as_ref())
+        && let Ok(mut f) = shared.fault.lock()
+    {
+        f.get_or_insert_with(|| e.clone());
+    }
+}
+
 fn write_takes(shared: &Shared, mut takes: Vec<TakeWriter>, channels: usize) -> Takes {
     let (mut block, mut header_written) = (Vec::new(), Instant::now());
     loop {
@@ -185,12 +215,14 @@ fn write_takes(shared: &Shared, mut takes: Vec<TakeWriter>, channels: usize) -> 
         let whole = block.len() - block.len() % channels.max(1);
         takes.iter_mut().for_each(|t| t.write(&block[..whole], channels));
         block.drain(..whole);
+        publish_fault(shared, &takes);
         if stopping {
             break;
         }
         if header_written.elapsed() >= Duration::from_secs(1) {
             header_written = Instant::now();
             takes.iter_mut().for_each(TakeWriter::write_header);
+            publish_fault(shared, &takes);
         }
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -269,7 +301,7 @@ mod tests {
 
     #[test]
     fn a_full_ring_owes_the_lost_samples_as_silence() {
-        let shared = Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(8), dropped: AtomicUsize::new(0) };
+        let shared = Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(8), dropped: AtomicUsize::new(0), fault: Mutex::new(None) };
         let (mut owed, mut out) = (0, Vec::new());
         shared.capture(&[1.0; 6], &mut owed);
         shared.capture(&[2.0; 4], &mut owed);
@@ -292,7 +324,7 @@ mod tests {
         vox.write(&[0.25; 150], 3);
         assert_eq!(decode(&dir.join("Vox_01.wav"))[0].len(), 100, "the header covers what it has seen");
 
-        let shared = Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 16), dropped: AtomicUsize::new(0) });
+        let shared = Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 16), dropped: AtomicUsize::new(0), fault: Mutex::new(None) });
         let sh = Arc::clone(&shared);
         let writer = std::thread::spawn(move || write_takes(&sh, vec![gtr, vox], 3));
         let input: Vec<f32> = (0..3 * 4_800).map(|i| i as f32 / 20_000.0).collect();
@@ -323,7 +355,7 @@ mod fault_tests {
 
     /// A recorder with no input device behind it, so the whole arm and finish path can run.
     fn deviceless(ring_samples: usize, channels: usize, rate: u32) -> Recorder {
-        let shared = Arc::new(Shared { armed: AtomicBool::new(false), ring: CaptureRing::new(ring_samples), dropped: AtomicUsize::new(0) });
+        let shared = Arc::new(Shared { armed: AtomicBool::new(false), ring: CaptureRing::new(ring_samples), dropped: AtomicUsize::new(0), fault: Mutex::new(None) });
         Recorder {
             shared,
             monitor: InputRing::new(channels, rate),
@@ -411,7 +443,7 @@ mod fault_tests {
             frames: 0,
             error: None,
         };
-        let shared = Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 16), dropped: AtomicUsize::new(0) });
+        let shared = Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 16), dropped: AtomicUsize::new(0), fault: Mutex::new(None) });
         let sh = Arc::clone(&shared);
         let writer = std::thread::spawn(move || write_takes(&sh, vec![broken], 1));
         let mut owed = 0;
@@ -425,6 +457,28 @@ mod fault_tests {
         assert_eq!(still_counted_as_lost, 0, "the ring kept draining, so nothing looked lost while 0.5 s was being discarded");
         assert!(problem.is_some(), "the error does surface, at the end");
         assert!(takes.is_empty(), "a take with no frames is removed");
+    }
+
+    #[test]
+    fn a_failed_write_is_published_while_recording() {
+        let dir = temp("livefault");
+        let path = dir.join("A.wav");
+        TakeWriter::create(TrackId(1), vec![0], path.clone(), 48_000).unwrap();
+        let broken =
+            TakeWriter { id: TrackId(1), inputs: vec![0], path: path.clone(), file: File::open(&path).unwrap(), rate: 48_000, frames: 0, error: None };
+        let shared = Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 16), dropped: AtomicUsize::new(0), fault: Mutex::new(None) });
+        let sh = Arc::clone(&shared);
+        let writer = std::thread::spawn(move || write_takes(&sh, vec![broken], 1));
+        let mut owed = 0;
+        shared.capture(&[0.25; 480], &mut owed);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while shared.fault.lock().map_or(true, |f| f.is_none()) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let live = shared.fault.lock().ok().and_then(|f| f.clone());
+        shared.armed.store(false, Ordering::Release);
+        let _ = writer.join();
+        assert!(live.is_some_and(|f| f.contains("A.wav")), "the fault is visible before the recording stops");
     }
 
     #[test]
@@ -447,7 +501,7 @@ mod fault_tests {
         let Ok(dir) = std::env::var("SC_KILL_DIR") else { return };
         let path = PathBuf::from(dir).join("A.wav");
         let take = TakeWriter::create(TrackId(1), vec![0], path, 48_000).unwrap();
-        let shared = Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 18), dropped: AtomicUsize::new(0) });
+        let shared = Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 18), dropped: AtomicUsize::new(0), fault: Mutex::new(None) });
         let sh = Arc::clone(&shared);
         std::thread::spawn(move || write_takes(&sh, vec![take], 1));
         let mut owed = 0;
@@ -497,7 +551,7 @@ mod fault_tests {
         let Ok(dir) = std::env::var("SC_FULL_DISK_DIR") else { return };
         let path = PathBuf::from(dir).join("Full_01.wav");
         let take = TakeWriter::create(TrackId(1), vec![0], path.clone(), 48_000).unwrap();
-        let shared = Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 18), dropped: AtomicUsize::new(0) });
+        let shared = Arc::new(Shared { armed: AtomicBool::new(true), ring: CaptureRing::new(1 << 18), dropped: AtomicUsize::new(0), fault: Mutex::new(None) });
         let sh = Arc::clone(&shared);
         let writer = std::thread::spawn(move || write_takes(&sh, vec![take], 1));
         let mut owed = 0;
