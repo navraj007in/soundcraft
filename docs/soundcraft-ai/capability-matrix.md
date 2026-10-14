@@ -1,7 +1,7 @@
 # SoundCraft-AI capability matrix
 
 **Task:** P0-T02 in the [execution plan](execution-plan.md) · **Spec:** PRD v0.3 §3.1–§3.2
-**Matrix version:** 0.3 · **Updated:** 14 October 2026 · **Status:** Source pass complete. Row 9 (backing import) has a first runtime measurement on the inspection host; every other runtime column is unverified.
+**Matrix version:** 0.4 · **Updated:** 14 October 2026 · **Status:** Source pass complete. Row 9 (backing import) has a first runtime measurement on the inspection host; every other runtime column is unverified.
 
 This matrix records, for each foundation capability the PRD depends on, three independent kinds of
 evidence (PRD §3.1):
@@ -40,7 +40,7 @@ A passing entry needs an evidence link and a date (PRD §15).
 | 4 | Session revision | Not documented | Exists; not exposed | **Measured on the spike branch:** moves on selection, playhead and save/bounce, not only edits | n/a | P0-T06 (done, [spike-guarded-publish.md](spike-guarded-publish.md)); P1-E01 |
 | 5 | Undo and snapshots | Copy-on-write snapshots | Matches, plus gesture coalescing | **Measured on the spike branch:** grouped publish as one undo entry, all or nothing | Agree | P0-T06 (done); P1-E02 |
 | 6 | Batch commands | Sequential, `keep_going` | Sequential, no transaction | Unverified | Agree | P0-T06 (contrast with P1-E02) |
-| 7 | Local control | Loopback TCP; auth not mentioned | Loopback TCP; no auth check | Unverified | Agree | P0-T07 |
+| 7 | Local control | Loopback TCP; auth not mentioned | Loopback TCP; no auth check | **Measured on the test branch:** an HTTP-framed JSON body from a web page executes `engine.execute` | Agree | P0-T07 (done, [control-channel-protection.md](control-channel-protection.md)); P1-E03 |
 | 8 | Audio to MIDI | "Pitch tracker" | YIN rounded to MIDI notes; no confidence | Unverified | Agree | P0-T08 |
 | 9 | Backing import | MP3, AAC/M4A supported | symphonia, gapless on | **Partly measured, inspection host:** WAV and LAME-tagged MP3 correct; **AAC +1024/+2112 samples late**; untagged MP3 +1104; 100 save/reopen cycles clean | Formats agree; the docs don't mention AAC priming | P0-T03 (done, [import-matrix.md](import-matrix.md)); repairs P1-E07 |
 | 10 | Built-in processors | EQ and compressor listed; fidelity unmeasured | Present; 1 EQ and 1 compressor test | Unverified | Agree | P1-M02, P2-M01, P2-M02 |
@@ -148,7 +148,7 @@ A passing entry needs an evidence link and a date (PRD §15).
   `control_server.rs`.
 - **Consequence:** any local process can drive the app. This is a transport, not an authorisation
   boundary (PRD §10.2); fixed by P1-E03.
-- **Runtime-tested:** Unverified (P0-T07 writes the rejection tests).
+- **Runtime-tested (P0-T07, branch `spike/control-auth`, 14 October 2026):** see [control-channel-protection.md](control-channel-protection.md). Seven tests written against today's server all fail, including one in which an HTTP POST with a JSON body runs `engine.execute`; a throwaway reference implementation made all pass.
 
 ### 8. Audio to MIDI (S11, S15)
 
@@ -243,3 +243,4 @@ The PRD's source labels and the repository paths they point to at the pinned com
 | 0.1 | 14 October 2026 | First source pass (P0-T02). All runtime columns unverified. |
 | 0.2 | 14 October 2026 | P0-T01 build record (partial) and P0-T03 runtime results for row 9. |
 | 0.3 | 14 October 2026 | P0-T06 runtime results for rows 4 and 5 (spike branch, inspection host). |
+| 0.4 | 14 October 2026 | P0-T07 runtime result for row 7. |
