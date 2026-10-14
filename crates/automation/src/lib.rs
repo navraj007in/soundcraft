@@ -78,7 +78,25 @@ impl Remote {
         Remote { addr, conn: None, next_id: 1 }
     }
 
+    /// True when the server has already closed the idle connection (a peek reads end of file), so
+    /// a request is never sent into a dead socket.
+    fn is_stale(&self) -> bool {
+        let Some((s, _)) = &self.conn else { return false };
+        if s.set_nonblocking(true).is_err() {
+            return true;
+        }
+        let mut b = [0u8; 1];
+        let stale = match s.peek(&mut b) {
+            Ok(n) => n == 0,
+            Err(e) => e.kind() != std::io::ErrorKind::WouldBlock,
+        };
+        stale || s.set_nonblocking(false).is_err()
+    }
+
     fn connect(&mut self) -> Result<(), String> {
+        if self.is_stale() {
+            self.conn = None;
+        }
         if self.conn.is_some() {
             return Ok(());
         }
@@ -91,37 +109,67 @@ impl Remote {
         Ok(())
     }
 
-    fn roundtrip(&mut self, method: &str, params: &Value) -> Result<Value, String> {
-        self.connect()?;
+    /// One request/reply. `Err(Failure::NotSent)` means the request provably never left, so it
+    /// is safe to send again; `Err(Failure::Unknown)` means the server may have executed it.
+    fn roundtrip(&mut self, method: &str, params: &Value) -> Result<Value, Failure> {
+        self.connect().map_err(Failure::NotSent)?;
         let id = self.next_id;
         self.next_id += 1;
         let line = json!({"id": id, "method": method, "params": params}).to_string();
-        let (w, r) = self.conn.as_mut().ok_or("not connected")?;
-        writeln!(w, "{line}").map_err(|e| e.to_string())?;
+        let (w, r) = self.conn.as_mut().ok_or_else(|| Failure::NotSent("not connected".into()))?;
+        writeln!(w, "{line}").map_err(|e| Failure::NotSent(e.to_string()))?;
         let mut buf = String::new();
-        r.read_line(&mut buf).map_err(|e| e.to_string())?;
+        r.read_line(&mut buf).map_err(|e| Failure::Unknown(e.to_string()))?;
         if buf.is_empty() {
-            return Err("connection closed".into());
+            return Err(Failure::Unknown("connection closed".into()));
         }
-        let v: Value = serde_json::from_str(&buf).map_err(|e| e.to_string())?;
+        let v: Value = serde_json::from_str(&buf).map_err(|e| Failure::Unknown(e.to_string()))?;
         if v.get("ok").and_then(Value::as_bool).unwrap_or(false) {
             Ok(v.get("result").cloned().unwrap_or(Value::Null))
         } else {
-            Err(v.get("error").and_then(Value::as_str).unwrap_or("error").to_string())
+            Err(Failure::Rejected(v.get("error").and_then(Value::as_str).unwrap_or("error").to_string()))
         }
+    }
+}
+
+enum Failure {
+    /// The server answered with an error: nothing to retry.
+    Rejected(String),
+    /// The request never reached the server.
+    NotSent(String),
+    /// The request was sent but no reply arrived: the server may or may not have applied it.
+    Unknown(String),
+}
+
+/// Methods that only read state: sending one twice is harmless.
+fn is_read_only(method: &str) -> bool {
+    matches!(method, "engine.commands" | "engine.parity" | "session.inspect" | "document.inspect" | "ui.inspect" | "ui.menu.list")
+}
+
+impl Remote {
+    fn retry(&mut self, method: &str, params: &Value) -> Result<Value, String> {
+        self.roundtrip(method, params).map_err(|f| match f {
+            Failure::Rejected(e) | Failure::NotSent(e) | Failure::Unknown(e) => e,
+        })
     }
 }
 
 impl Backend for Remote {
     fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
-        match self.roundtrip(method, &params) {
-            Ok(v) => Ok(v),
-            Err(e) if e.contains("closed") || e.contains("Broken pipe") || e.contains("reset") => {
-                // Retry once on a fresh connection.
-                self.conn = None;
-                self.roundtrip(method, &params)
-            }
-            Err(e) => Err(e),
+        let first = match self.roundtrip(method, &params) {
+            Ok(v) => return Ok(v),
+            Err(Failure::Rejected(e)) => return Err(e),
+            Err(f) => f,
+        };
+        self.conn = None;
+        match first {
+            // Never delivered, or a read: a fresh connection and one more attempt is safe.
+            Failure::NotSent(_) => self.retry(method, &params),
+            Failure::Unknown(_) if is_read_only(method) => self.retry(method, &params),
+            Failure::Unknown(e) => Err(format!(
+                "connection lost after sending `{method}` ({e}); the app may or may not have applied it. Inspect the session before repeating it"
+            )),
+            Failure::Rejected(e) => Err(e),
         }
     }
     fn has_ui(&self) -> bool {
@@ -151,5 +199,58 @@ mod tests {
     fn remote_reports_unreachable() {
         let mut r = Remote::new("127.0.0.1:1");
         assert!(r.call("session.inspect", json!({})).is_err());
+    }
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::*;
+    use std::net::TcpListener;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A server that executes the first request on each connection and drops the first connection
+    /// before replying.
+    fn flaky() -> (String, Arc<AtomicUsize>, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let applied = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&applied);
+        let h = std::thread::spawn(move || {
+            for attempt in 0..2 {
+                let Ok((mut stream, _)) = listener.accept() else { return };
+                let mut text = String::new();
+                if BufReader::new(stream.try_clone().unwrap()).read_line(&mut text).is_err() || text.is_empty() {
+                    continue;
+                }
+                counter.fetch_add(1, Ordering::SeqCst);
+                if attempt == 1 {
+                    let msg: Value = serde_json::from_str(&text).unwrap();
+                    let _ = writeln!(stream, "{}", json!({"id": msg["id"], "ok": true, "result": {}}));
+                }
+            }
+        });
+        (addr, applied, h)
+    }
+
+    #[test]
+    fn a_mutation_whose_reply_is_lost_is_never_sent_twice() {
+        let (addr, applied, h) = flaky();
+        let mut c = Remote::new(&addr);
+        let e = c.call("engine.execute", json!({"command": "track.new", "params": {"count": 1}})).unwrap_err();
+        assert!(e.contains("may or may not have applied"), "{e}");
+        assert_eq!(applied.load(Ordering::SeqCst), 1);
+        drop(c);
+        let _ = std::net::TcpStream::connect(&addr); // release the accept loop
+        let _ = h.join();
+    }
+
+    #[test]
+    fn a_read_is_retried_after_a_lost_reply() {
+        let (addr, applied, h) = flaky();
+        let mut c = Remote::new(&addr);
+        assert!(c.call("session.inspect", json!({})).is_ok());
+        assert_eq!(applied.load(Ordering::SeqCst), 2);
+        let _ = h.join();
     }
 }
