@@ -693,6 +693,8 @@ impl SoundApp {
                         p.stop();
                         p.set_recording(false);
                         p.set_speed(1.0);
+                        // No plugin instance may carry over into the replacement document.
+                        p.reset_session();
                         p.locate(self.engine.transport.position);
                     }
                     self.sim = None;

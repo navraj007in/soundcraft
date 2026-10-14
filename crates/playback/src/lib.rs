@@ -66,6 +66,8 @@ enum Cmd {
     },
     Stop,
     Locate(Samples),
+    /// The document was replaced: drop every plugin instance (they belong to the old one).
+    ResetSession,
 }
 
 struct Shared {
@@ -176,6 +178,15 @@ impl AudioState {
                     self.pos = at;
                     self.pending_len = 0;
                     self.read = 0.0;
+                }
+                Cmd::ResetSession => {
+                    let sr = self.session.sample_rate.as_f64() as f32;
+                    let mut old = std::mem::replace(&mut self.mix, new_engine(sr));
+                    let _ = self.garbage.send(old.drain_plugins());
+                    self.playing = false;
+                    self.end = None;
+                    self.looped = None;
+                    changed = true;
                 }
             }
         }
@@ -333,6 +344,18 @@ impl Side {
     fn collect_garbage(&mut self) {
         while let Ok(g) = self.garbage.try_recv() {
             drop(g);
+        }
+    }
+
+    /// Forget every instance: the next `prepare` creates them all anew from the session's stored state.
+    fn forget_all(&mut self) {
+        let keys: Vec<(TrackId, usize)> = self.shadow.keys().copied().collect();
+        for k in keys {
+            self.forget(k);
+        }
+        let editors: Vec<(TrackId, usize)> = self.editors.keys().copied().collect();
+        for k in editors {
+            self.forget(k);
         }
     }
 
@@ -523,6 +546,13 @@ impl Player {
     pub fn update_session(&self, s: Arc<Session>) {
         let instances = self.side().prepare(&s);
         let _ = self.tx.send(Cmd::Session(s, instances));
+    }
+
+    /// The document was replaced (new, open, revert): no plugin instance carries over. Call before
+    /// `update_session` with the replacement, which then creates its plugins from its own state.
+    pub fn reset_session(&self) {
+        self.side().forget_all();
+        let _ = self.tx.send(Cmd::ResetSession);
     }
 
     /// Reads the state of every live third-party plugin (for saving the session). Waits briefly
@@ -910,6 +940,87 @@ mod tests {
         tx.send(Cmd::Session(Arc::new(s44), Vec::new())).unwrap();
         st.fill(&mut out, 2);
         assert_eq!(grx.try_recv().unwrap().len(), 1);
+    }
+
+    struct Tagged(Box<dyn Plugin>, &'static [u8]);
+
+    impl Plugin for Tagged {
+        fn info(&self) -> &'static soundcraft_dsp::PluginInfo {
+            self.0.info()
+        }
+        fn prepare(&mut self, sr: f32, mb: usize, ch: usize) {
+            self.0.prepare(sr, mb, ch);
+        }
+        fn reset(&mut self) {
+            self.0.reset();
+        }
+        fn set_param(&mut self, id: &str, v: f32) -> bool {
+            self.0.set_param(id, v)
+        }
+        fn param(&self, id: &str) -> Option<f32> {
+            self.0.param(id)
+        }
+        fn process(&mut self, io: &mut [Vec<f32>], frames: usize) {
+            self.0.process(io, frames);
+        }
+        fn save_state(&mut self) -> Option<Vec<u8>> {
+            Some(self.1.to_vec())
+        }
+    }
+
+    #[test]
+    fn a_replaced_session_does_not_keep_the_previous_sessions_plugin_state() {
+        use soundcraft_model::{ChannelFormat, Insert, TrackKind};
+        let mut s = soundcraft_model::Session::default();
+        let t = s.add_track(TrackKind::Audio, ChannelFormat::Stereo, None);
+        s.track_mut(t).unwrap().mixer.inserts[1] = Some(Insert::new("clap:test.fake"));
+        let s = Arc::new(s);
+        let shared = Arc::new(Shared {
+            position: AtomicI64::new(0),
+            playing: AtomicBool::new(false),
+            speed: AtomicU32::new(1000),
+            meters: Mutex::new(MeterSnapshot::default()),
+        });
+        let (tx, rx) = channel();
+        let (gtx, grx) = channel();
+        let mut st = AudioState::new(rx, Arc::clone(&shared), Arc::new(soundcraft_model::Session::default()), 48_000.0, gtx);
+        let inst = |tag: &'static [u8]| PreparedInstance {
+            track: t,
+            slot: 1,
+            id: "clap:test.fake".into(),
+            ch: 2,
+            plugin: Box::new(Tagged(soundcraft_dsp::create("gain").unwrap(), tag)),
+        };
+        let mut out = vec![0.0f32; 256];
+        let captured = |st: &mut AudioState, tx: &Sender<Cmd>, out: &mut Vec<f32>| {
+            let (rtx, rrx) = channel();
+            tx.send(Cmd::CaptureStates(rtx)).unwrap();
+            st.fill(out, 2);
+            rrx.try_recv().unwrap()
+        };
+        tx.send(Cmd::Session(Arc::clone(&s), vec![inst(b"SESSION A")])).unwrap();
+        st.fill(&mut out, 2);
+        assert_eq!(captured(&mut st, &tx, &mut out), vec![(t, 1, b"SESSION A".to_vec())]);
+        // Replacing the document resets the engine; the new session's instance is the one that lives.
+        tx.send(Cmd::ResetSession).unwrap();
+        tx.send(Cmd::Session(Arc::clone(&s), vec![inst(b"SESSION B")])).unwrap();
+        st.fill(&mut out, 2);
+        assert_eq!(captured(&mut st, &tx, &mut out), vec![(t, 1, b"SESSION B".to_vec())]);
+        assert_eq!(grx.try_recv().unwrap().len(), 1, "the old instance goes back to the UI thread to be dropped");
+    }
+
+    #[test]
+    fn side_recreates_every_instance_after_a_session_replacement() {
+        use soundcraft_model::{ChannelFormat, Insert, TrackKind};
+        let (_gtx, grx) = channel();
+        let mut side = Side { shadow: HashMap::new(), rate: 48_000.0, editors: HashMap::new(), garbage: grx };
+        let mut s = soundcraft_model::Session::default();
+        let t = s.add_track(TrackKind::Audio, ChannelFormat::Mono, None);
+        s.track_mut(t).unwrap().mixer.inserts[0] = Some(Insert::new("clap:does.not.exist"));
+        side.prepare(&s);
+        assert_eq!(side.shadow.len(), 1);
+        side.forget_all();
+        assert!(side.shadow.is_empty(), "nothing is remembered across a replacement");
     }
 
     #[test]
