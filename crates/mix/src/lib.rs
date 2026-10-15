@@ -465,6 +465,56 @@ impl MixEngine {
         out
     }
 
+    /// Take every live third-party plugin out of its slot and hand it over, so another thread can
+    /// serialise it (hosts expect state calls on their main thread) while the audio thread keeps
+    /// rendering. Until [`MixEngine::adopt`] returns it a slot is simply bypassed, an instrument
+    /// silent. Moves boxes only: no plugin code runs and nothing is dropped here.
+    pub fn checkout_plugins(&mut self) -> Vec<PreparedInstance> {
+        let mut out = Vec::new();
+        for (tid, st) in self.strips.iter_mut() {
+            for (i, slot) in st.plugins.iter_mut().enumerate() {
+                if slot.as_ref().is_some_and(|s| is_third_party(&s.id))
+                    && let Some(s) = slot.take()
+                {
+                    out.push(PreparedInstance { track: *tid, slot: i, id: s.id, ch: s.ch, plugin: s.plugin });
+                }
+            }
+            if st.instrument.as_ref().is_some_and(|s| is_third_party(&s.id))
+                && let Some(s) = st.instrument.take()
+            {
+                out.push(PreparedInstance { track: *tid, slot: INSTRUMENT_SLOT, id: s.id, ch: s.ch, plugin: s.plugin });
+            }
+        }
+        out
+    }
+
+    /// Put plugins from [`MixEngine::checkout_plugins`] back into their slots. A plugin whose slot
+    /// no longer wants it (the insert was removed, replaced or re-created meanwhile) is retired
+    /// instead, so a stale instance can never resurface later with an old session's state.
+    pub fn restore_plugins(&mut self, s: &Session, instances: Vec<PreparedInstance>) {
+        let main_ch = main_channels(s);
+        for p in instances {
+            let Some(t) = s.track(p.track) else {
+                self.retired.push(p.plugin);
+                continue;
+            };
+            let ch = strip_channels(t, main_ch);
+            let wanted = if p.slot == INSTRUMENT_SLOT {
+                t.instrument.as_ref().is_some_and(|i| i.plugin == p.id) && p.ch == ch.max(2)
+            } else {
+                t.mixer.inserts.get(p.slot).and_then(Option::as_ref).is_some_and(|i| i.plugin == p.id) && p.ch == ch
+            };
+            let free = self
+                .strips
+                .get_mut(&p.track)
+                .and_then(|st| if p.slot == INSTRUMENT_SLOT { Some(&mut st.instrument) } else { st.plugins.get_mut(p.slot) });
+            match free {
+                Some(slot) if wanted && slot.is_none() => *slot = Some(PluginSlot { id: p.id, ch: p.ch, plugin: p.plugin, applied: Vec::new() }),
+                _ => self.retired.push(p.plugin),
+            }
+        }
+    }
+
     /// The state of every live plugin that has one (third-party plugins), as
     /// `(track, slot or INSTRUMENT_SLOT, state)`. Calls into the plugins and allocates.
     pub fn capture_states(&mut self) -> Vec<(TrackId, usize, Vec<u8>)> {
@@ -2369,6 +2419,34 @@ mod tests {
             m.render(&s, i * 512, 512, &mut out);
         }
         (on.load(Ordering::SeqCst), off.load(Ordering::SeqCst))
+    }
+
+    #[test]
+    fn checked_out_plugins_return_to_their_slot_but_never_to_a_removed_insert() {
+        use std::sync::atomic::AtomicUsize;
+        let mut s = Session::default();
+        let t = s.add_track(TrackKind::Audio, ChannelFormat::Stereo, None);
+        s.track_mut(t).unwrap().mixer.inserts[0] = Some(Insert::new("clap:test.held"));
+        let counter =
+            || NoteCounter { inner: soundcraft_dsp::create("gain").unwrap(), on: Arc::new(AtomicUsize::new(0)), off: Arc::new(AtomicUsize::new(0)) };
+        let mut m = MixEngine::new(48000., 512);
+        m.set_external_instances(true);
+        m.adopt(vec![PreparedInstance { track: t, slot: 0, id: "clap:test.held".into(), ch: 2, plugin: Box::new(counter()) }]);
+        let mut out = vec![vec![0.; 512]; 2];
+        m.render(&s, 0, 512, &mut out);
+        let taken = m.checkout_plugins();
+        assert_eq!(taken.len(), 1);
+        assert!(m.checkout_plugins().is_empty(), "taking is exclusive");
+        m.render(&s, 512, 512, &mut out); // a bypassed slot renders without it
+        m.restore_plugins(&s, taken);
+        assert_eq!(m.checkout_plugins().len(), 1, "it went back into its slot");
+        // The insert is removed while the plugin is away: it is retired, not resurrected later.
+        let taken = m.checkout_plugins();
+        assert!(taken.is_empty());
+        s.track_mut(t).unwrap().mixer.inserts[0] = None;
+        m.restore_plugins(&s, vec![PreparedInstance { track: t, slot: 0, id: "clap:test.held".into(), ch: 2, plugin: Box::new(counter()) }]);
+        assert!(m.checkout_plugins().is_empty());
+        assert_eq!(m.take_retired().len(), 1);
     }
 
     #[test]

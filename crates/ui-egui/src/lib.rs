@@ -533,6 +533,11 @@ impl SoundApp {
         if last.elapsed().as_secs() < 120 || !self.engine.is_dirty() || self.engine.transport.recording {
             return;
         }
+        // Reading plugin states takes the plugins out of the mix for a moment: not during playback
+        // (it would be heard). The copy happens as soon as the transport stops.
+        if self.is_playing() {
+            return;
+        }
         self.last_autosave = Some(std::time::Instant::now());
         if let Err(e) = self.capture_plugin_states() {
             // Never write a recovery copy that silently carries old plugin settings.

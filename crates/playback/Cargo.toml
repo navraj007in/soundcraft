@@ -21,5 +21,8 @@ cpal.workspace = true
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 cpal = { workspace = true, features = ["wasm-bindgen"] }
 
+[dev-dependencies]
+soundcraft-clap-host.workspace = true
+
 [lints]
 workspace = true

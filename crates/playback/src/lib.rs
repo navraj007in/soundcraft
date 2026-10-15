@@ -17,8 +17,9 @@
 //! travel to the audio thread together with the session snapshot that needs them; the mix
 //! engine adopts them (see `soundcraft_mix`'s crate docs). Instances the engine retires come back
 //! on a return channel and are dropped on the UI thread ([`Player::idle`]). Plugin states for
-//! saving are read on request ([`Player::capture_states`]: a command with a reply; the audio
-//! thread answers between two blocks, never blocking). Plugin editors are driven on the UI thread
+//! saving are read on request ([`Player::capture_states`]): the audio thread hands its plugins to
+//! the caller (moving boxes only), the caller serialises them on its own thread and sends them
+//! back, so no plugin code runs in the audio callback. Plugin editors are driven on the UI thread
 //! through handles taken from each instance before it leaves ([`Player::open_editor`]).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -74,15 +75,31 @@ impl std::error::Error for CaptureError {}
 #[cfg(not(target_arch = "wasm32"))]
 const CAPTURE_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// Ask the audio thread for every plugin state and wait up to `wait` for the answer.
+/// Read every plugin state without running plugin code on the audio thread. The audio thread hands
+/// its third-party plugins over (only moving boxes), this thread serialises them (where hosts expect
+/// state calls) and sends them back; while a plugin is away its slot is bypassed. Plugins always go
+/// back, even when one panics or the caller gives up, and a plugin that arrives after the document
+/// was replaced is dropped, never restored.
 #[cfg(not(target_arch = "wasm32"))]
 fn request_capture(tx: &Sender<Cmd>, wait: std::time::Duration) -> Result<PluginStates, CaptureError> {
     let (rtx, rrx) = channel();
-    tx.send(Cmd::CaptureStates(rtx)).map_err(|_| CaptureError::Unavailable)?;
-    rrx.recv_timeout(wait).map_err(|e| match e {
+    tx.send(Cmd::Checkout(rtx)).map_err(|_| CaptureError::Unavailable)?;
+    let (generation, mut taken) = rrx.recv_timeout(wait).map_err(|e| match e {
         std::sync::mpsc::RecvTimeoutError::Timeout => CaptureError::Timeout,
         std::sync::mpsc::RecvTimeoutError::Disconnected => CaptureError::Unavailable,
-    })
+    })?;
+    let mut states = PluginStates::new();
+    for p in &mut taken {
+        let saved = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| p.plugin.save_state()));
+        match saved {
+            Ok(Some(data)) => states.push((p.track, p.slot, data)),
+            Ok(None) => {}
+            Err(_) => log::error!("plugin {} panicked while saving its state", p.id),
+        }
+    }
+    states.sort_by_key(|(t, s, _)| (*t, *s));
+    let _ = tx.send(Cmd::Return(generation, taken));
+    Ok(states)
 }
 
 /// A parameter edit made in a plugin's own editor: `(track, slot, param id, value)`.
@@ -91,9 +108,12 @@ pub type EditorEdit = (TrackId, usize, String, f32);
 enum Cmd {
     /// A new snapshot plus the third-party instances it needs (created on the UI thread).
     Session(Arc<Session>, Vec<PreparedInstance>),
-    /// Read every plugin state and reply.
+    /// Hand every third-party plugin over for state capture, with the current generation.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    CaptureStates(Sender<PluginStates>),
+    Checkout(Sender<(u64, Vec<PreparedInstance>)>),
+    /// Plugins coming back from a capture, with the generation they were taken in.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    Return(u64, Vec<PreparedInstance>),
     Input(Arc<record::InputRing>),
     Recording(bool),
     Play {
@@ -134,6 +154,8 @@ struct AudioState {
     device_rate: f64,
     input: Option<Arc<record::InputRing>>,
     recording: bool,
+    /// Bumped whenever plugins taken out for a capture must not come back (document or engine replaced).
+    generation: u64,
     /// Retired plugin instances go back to the UI thread to be dropped there.
     garbage: Sender<Vec<Box<dyn Plugin>>>,
 }
@@ -150,6 +172,7 @@ impl AudioState {
         let sr = session.sample_rate.as_f64() as f32;
         let nch = main_channels(&session);
         AudioState {
+            generation: 0,
             garbage,
             fold: fold_gains(&session),
             rx,
@@ -175,13 +198,21 @@ impl AudioState {
             match c {
                 Cmd::Input(r) => self.input = Some(r),
                 Cmd::Recording(r) => self.recording = r,
-                Cmd::CaptureStates(reply) => {
-                    let started = std::time::Instant::now();
+                Cmd::Checkout(reply) => {
+                    // Place adopted instances first so they are handed over too.
                     self.mix.ensure_synced(&self.session);
-                    let _ = reply.send(self.mix.capture_states());
-                    // Plugin serialisation runs between blocks on this thread: say so when it is long.
-                    if started.elapsed() > std::time::Duration::from_millis(20) {
-                        log::warn!("plugin state capture held the audio thread for {} ms", started.elapsed().as_millis());
+                    let taken = self.mix.checkout_plugins();
+                    if let Err(std::sync::mpsc::SendError((_, taken))) = reply.send((self.generation, taken)) {
+                        // The requester gave up: nobody will send them back, so restore them now.
+                        self.mix.restore_plugins(&self.session, taken);
+                    }
+                }
+                Cmd::Return(generation, taken) => {
+                    if generation == self.generation {
+                        self.mix.restore_plugins(&self.session, taken);
+                    } else {
+                        // They belong to a replaced document or engine: never put them back.
+                        let _ = self.garbage.send(taken.into_iter().map(|p| p.plugin).collect());
                     }
                 }
                 Cmd::Session(s, instances) => {
@@ -189,6 +220,8 @@ impl AudioState {
                     if (s.sample_rate.as_f64() - self.session.sample_rate.as_f64()).abs() > 0.5 {
                         let mut old = std::mem::replace(&mut self.mix, new_engine(s.sample_rate.as_f64() as f32));
                         let _ = self.garbage.send(old.drain_plugins());
+                        // Plugins out for a capture were prepared for the old rate.
+                        self.generation = self.generation.wrapping_add(1);
                     }
                     self.mix.adopt(instances);
                     // The main format changed (a document edit, not steady state): resize.
@@ -225,6 +258,7 @@ impl AudioState {
                     let sr = self.session.sample_rate.as_f64() as f32;
                     let mut old = std::mem::replace(&mut self.mix, new_engine(sr));
                     let _ = self.garbage.send(old.drain_plugins());
+                    self.generation = self.generation.wrapping_add(1);
                     self.playing = false;
                     self.end = None;
                     self.looped = None;
@@ -597,9 +631,10 @@ impl Player {
         let _ = self.tx.send(Cmd::ResetSession);
     }
 
-    /// Reads the state of every live third-party plugin (for saving the session). Waits briefly
-    /// for the audio thread to answer between two blocks; a failure is an error, never an empty
-    /// list (which means "no stateful plugins").
+    /// Reads the state of every live third-party plugin (for saving the session), on the calling
+    /// thread. While the plugins are away their slots are bypassed (an instrument is silent), so
+    /// during playback this is a brief audible gap; a failure is an error, never an empty list
+    /// (which means "no stateful plugins").
     pub fn capture_states(&self) -> Result<PluginStates, CaptureError> {
         self.side().collect_garbage();
         #[cfg(not(target_arch = "wasm32"))]
@@ -932,6 +967,31 @@ mod tests {
         }
     }
 
+    /// Runs the audio callback on its own thread (as a device would) until stopped; returns the
+    /// state back so a test can continue synchronously.
+    fn run_audio(mut st: AudioState) -> (Arc<AtomicBool>, Arc<std::sync::atomic::AtomicUsize>, std::thread::JoinHandle<AudioState>) {
+        let stop = Arc::new(AtomicBool::new(false));
+        let blocks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (s2, b2) = (Arc::clone(&stop), Arc::clone(&blocks));
+        let h = std::thread::spawn(move || {
+            let mut out = vec![0.0f32; 256];
+            while !s2.load(Ordering::Relaxed) {
+                st.fill(&mut out, 2);
+                b2.fetch_add(1, Ordering::Relaxed);
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            st
+        });
+        (stop, blocks, h)
+    }
+
+    fn stop_audio(r: (Arc<AtomicBool>, Arc<std::sync::atomic::AtomicUsize>, std::thread::JoinHandle<AudioState>)) -> AudioState {
+        r.0.store(true, Ordering::Relaxed);
+        r.2.join().unwrap()
+    }
+
+    const WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
     #[test]
     fn instances_arrive_with_the_session_and_leave_through_the_return_channel() {
         use soundcraft_model::{ChannelFormat, Insert, TrackKind};
@@ -950,12 +1010,12 @@ mod tests {
         let mut st = AudioState::new(rx, Arc::clone(&shared), Arc::new(soundcraft_model::Session::default()), 48_000.0, gtx);
         let plugin: Box<dyn Plugin> = Box::new(Stateful(soundcraft_dsp::create("gain").unwrap()));
         tx.send(Cmd::Session(Arc::clone(&s), vec![PreparedInstance { track: t, slot: 1, id: "clap:test.fake".into(), ch: 2, plugin }])).unwrap();
-        let (rtx, rrx) = channel();
-        tx.send(Cmd::CaptureStates(rtx)).unwrap();
-        // Stopped: the callback only drains commands (adopting the instance) and answers.
+        // Stopped: the callback only drains commands (adopting the instance); the capture runs here.
+        let audio = run_audio(st);
+        assert_eq!(request_capture(&tx, WAIT).unwrap(), vec![(t, 1, b"blob".to_vec())]);
+        assert_eq!(request_capture(&tx, WAIT).unwrap(), vec![(t, 1, b"blob".to_vec())], "the plugin went back into its slot");
+        st = stop_audio(audio);
         let mut out = vec![0.0f32; 256];
-        st.fill(&mut out, 2);
-        assert_eq!(rrx.try_recv().unwrap(), vec![(t, 1, b"blob".to_vec())]);
         assert!(grx.try_recv().is_err(), "nothing retired yet");
         // A session without the insert retires the instance to the return channel.
         tx.send(Cmd::Session(Arc::new(soundcraft_model::Session::default()), Vec::new())).unwrap();
@@ -1022,7 +1082,7 @@ mod tests {
         });
         let (tx, rx) = channel();
         let (gtx, grx) = channel();
-        let mut st = AudioState::new(rx, Arc::clone(&shared), Arc::new(soundcraft_model::Session::default()), 48_000.0, gtx);
+        let st = AudioState::new(rx, Arc::clone(&shared), Arc::new(soundcraft_model::Session::default()), 48_000.0, gtx);
         let inst = |tag: &'static [u8]| PreparedInstance {
             track: t,
             slot: 1,
@@ -1030,21 +1090,14 @@ mod tests {
             ch: 2,
             plugin: Box::new(Tagged(soundcraft_dsp::create("gain").unwrap(), tag)),
         };
-        let mut out = vec![0.0f32; 256];
-        let captured = |st: &mut AudioState, tx: &Sender<Cmd>, out: &mut Vec<f32>| {
-            let (rtx, rrx) = channel();
-            tx.send(Cmd::CaptureStates(rtx)).unwrap();
-            st.fill(out, 2);
-            rrx.try_recv().unwrap()
-        };
         tx.send(Cmd::Session(Arc::clone(&s), vec![inst(b"SESSION A")])).unwrap();
-        st.fill(&mut out, 2);
-        assert_eq!(captured(&mut st, &tx, &mut out), vec![(t, 1, b"SESSION A".to_vec())]);
+        let audio = run_audio(st);
+        assert_eq!(request_capture(&tx, WAIT).unwrap(), vec![(t, 1, b"SESSION A".to_vec())]);
         // Replacing the document resets the engine; the new session's instance is the one that lives.
         tx.send(Cmd::ResetSession).unwrap();
         tx.send(Cmd::Session(Arc::clone(&s), vec![inst(b"SESSION B")])).unwrap();
-        st.fill(&mut out, 2);
-        assert_eq!(captured(&mut st, &tx, &mut out), vec![(t, 1, b"SESSION B".to_vec())]);
+        assert_eq!(request_capture(&tx, WAIT).unwrap(), vec![(t, 1, b"SESSION B".to_vec())]);
+        let _st = stop_audio(audio);
         assert_eq!(grx.try_recv().unwrap().len(), 1, "the old instance goes back to the UI thread to be dropped");
     }
 
@@ -1089,41 +1142,89 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_slow_serializer_is_a_timeout_error_not_an_empty_answer() {
+    fn slow_session() -> (Arc<soundcraft_model::Session>, TrackId) {
         use soundcraft_model::{ChannelFormat, Insert, TrackKind};
         let mut s = soundcraft_model::Session::default();
         let t = s.add_track(TrackKind::Audio, ChannelFormat::Stereo, None);
         s.track_mut(t).unwrap().mixer.inserts[1] = Some(Insert::new("clap:test.slow"));
+        (Arc::new(s), t)
+    }
+
+    fn audio_state(
+        session: Arc<soundcraft_model::Session>,
+        tx_session: &Sender<Cmd>,
+        t: TrackId,
+        rx: Receiver<Cmd>,
+    ) -> (AudioState, Receiver<Vec<Box<dyn Plugin>>>) {
         let shared = Arc::new(Shared {
             position: AtomicI64::new(0),
             playing: AtomicBool::new(false),
             speed: AtomicU32::new(1000),
             meters: Mutex::new(MeterSnapshot::default()),
         });
-        let (tx, rx) = channel();
-        let (gtx, _grx) = channel();
-        let mut st = AudioState::new(rx, shared, Arc::new(soundcraft_model::Session::default()), 48_000.0, gtx);
+        let (gtx, grx) = channel();
+        let st = AudioState::new(rx, shared, Arc::new(soundcraft_model::Session::default()), 48_000.0, gtx);
         let plugin: Box<dyn Plugin> = Box::new(Slow(soundcraft_dsp::create("gain").unwrap()));
-        tx.send(Cmd::Session(Arc::new(s), vec![PreparedInstance { track: t, slot: 1, id: "clap:test.slow".into(), ch: 2, plugin }])).unwrap();
-        let audio = std::thread::spawn(move || {
-            let mut out = vec![0.0f32; 256];
-            for _ in 0..40 {
-                st.fill(&mut out, 2);
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-        });
-        std::thread::sleep(std::time::Duration::from_millis(40));
-        assert_eq!(request_capture(&tx, std::time::Duration::from_millis(100)), Err(CaptureError::Timeout));
-        // Given long enough, the same capture succeeds with the plugin's state.
-        let ok = request_capture(&tx, std::time::Duration::from_secs(5)).unwrap();
-        assert_eq!(ok, vec![(t, 1, b"late".to_vec())]);
-        drop(tx);
-        let _ = audio.join();
+        tx_session.send(Cmd::Session(session, vec![PreparedInstance { track: t, slot: 1, id: "clap:test.slow".into(), ch: 2, plugin }])).unwrap();
+        (st, grx)
+    }
+
+    #[test]
+    fn a_slow_serializer_never_blocks_the_audio_thread() {
+        let (s, t) = slow_session();
+        let (tx, rx) = channel();
+        let (st, _grx) = audio_state(s, &tx, t, rx);
+        let audio = run_audio(st);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let before = audio.1.load(Ordering::Relaxed);
+        let started = std::time::Instant::now();
+        assert_eq!(request_capture(&tx, WAIT).unwrap(), vec![(t, 1, b"late".to_vec())]);
+        let taken = started.elapsed();
+        let during = audio.1.load(Ordering::Relaxed) - before;
+        assert!(taken >= std::time::Duration::from_millis(400), "the plugin really was slow: {taken:?}");
+        assert!(during >= 20, "the audio thread kept rendering while the plugin serialised: {during} blocks in {taken:?}");
+        // The plugin is back in its slot afterwards.
+        assert_eq!(request_capture(&tx, WAIT).unwrap(), vec![(t, 1, b"late".to_vec())]);
+        let _ = stop_audio(audio);
+    }
+
+    #[test]
+    fn a_stalled_audio_thread_is_a_timeout_and_loses_no_plugin() {
+        let (s, t) = slow_session();
+        let (tx, rx) = channel();
+        let (st, _grx) = audio_state(s, &tx, t, rx);
+        // Nothing is draining commands yet: the capture times out rather than answering "empty".
+        assert_eq!(request_capture(&tx, std::time::Duration::from_millis(50)), Err(CaptureError::Timeout));
+        // When the audio thread wakes it finds the abandoned request and keeps its plugin.
+        let audio = run_audio(st);
+        assert_eq!(request_capture(&tx, WAIT).unwrap(), vec![(t, 1, b"late".to_vec())]);
+        let _ = stop_audio(audio);
         // No audio thread at all is "unavailable", not an empty list.
         let (dead_tx, dead_rx) = channel::<Cmd>();
         drop(dead_rx);
         assert_eq!(request_capture(&dead_tx, std::time::Duration::from_millis(10)), Err(CaptureError::Unavailable));
+    }
+
+    #[test]
+    fn plugins_returning_after_the_document_was_replaced_are_dropped_not_restored() {
+        let (s, t) = slow_session();
+        let (tx, rx) = channel();
+        let (st, grx) = audio_state(s, &tx, t, rx);
+        let audio = run_audio(st);
+        let (rtx, rrx) = channel();
+        tx.send(Cmd::Checkout(rtx)).unwrap();
+        let (generation, taken) = rrx.recv_timeout(WAIT).unwrap();
+        assert_eq!(taken.len(), 1);
+        // The document is replaced while the plugin is away; the old plugin must not come back.
+        tx.send(Cmd::ResetSession).unwrap();
+        tx.send(Cmd::Return(generation, taken)).unwrap();
+        let mut dropped = 0;
+        while dropped == 0 {
+            dropped += grx.recv_timeout(WAIT).unwrap().len();
+        }
+        assert_eq!(dropped, 1, "the stale instance went to the return channel to be dropped off-thread");
+        assert_eq!(request_capture(&tx, WAIT).unwrap(), vec![], "nothing was restored into the new engine");
+        let _ = stop_audio(audio);
     }
 
     #[test]
