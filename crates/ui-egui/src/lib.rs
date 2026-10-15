@@ -913,29 +913,38 @@ impl SoundApp {
         self.player = Some(Player::with_config(self.engine.session_arc(), &self.ui.audio));
     }
 
-    /// Keep the open MIDI input ports in line with the session's enabled list (Setup › MIDI › MIDI
-    /// Input Devices), and look again every few seconds so a keyboard plugged in later is picked up.
+    /// Keep the open MIDI ports in line with the session: the enabled input devices (Setup › MIDI ›
+    /// MIDI Input Devices), the output ports MIDI tracks send to, and the Thru ports. Looks again
+    /// every few seconds so a device plugged in later is picked up.
     fn sync_midi_inputs(&mut self) {
         let Some(p) = &self.player else { return };
         let mut flags: Vec<String> = self.engine.session().edit.flags.iter().filter(|f| f.starts_with("midi.input.")).cloned().collect();
+        let outs = soundcraft_engine::midi_ports::wanted_output_names(&self.engine);
+        flags.extend(outs.iter().map(|n| format!("out:{n}")));
         flags.sort();
         let due = self.midi_checked.is_none_or(|t| t.elapsed().as_secs() >= 3);
         if self.midi_flags.as_ref() == Some(&flags) && !due {
             return;
         }
         self.midi_checked = Some(std::time::Instant::now());
-        let open = p.open_midi_inputs();
-        if flags.is_empty() && open.is_empty() {
+        let (open_in, open_out) = (p.open_midi_inputs(), p.open_midi_outputs());
+        if flags.is_empty() && open_in.is_empty() && open_out.is_empty() {
             self.midi_flags = Some(flags);
             return;
         }
-        let ports = soundcraft_playback::midi_io::list_ports().inputs;
-        let wanted = soundcraft_engine::io::enabled_midi_input_ports(&self.engine, &ports);
-        if wanted != open {
-            let problems = p.set_midi_inputs(&wanted);
-            if let Some(first) = problems.first() {
-                self.ui.status = format!("MIDI input: {first}");
-            }
+        let ports = soundcraft_playback::midi_io::list_ports();
+        let wanted_in = soundcraft_engine::io::enabled_midi_input_ports(&self.engine, &ports.inputs);
+        let wanted_out: Vec<String> = outs.into_iter().filter(|n| ports.outputs.contains(n)).collect();
+        let mut problems = Vec::new();
+        if wanted_in != open_in {
+            problems.extend(p.set_midi_inputs(&wanted_in));
+        }
+        if wanted_out != open_out {
+            problems.extend(p.set_midi_outputs(&wanted_out));
+        }
+        p.set_midi_thru(&soundcraft_engine::midi_ports::thru_names(&self.engine));
+        if let Some(first) = problems.first() {
+            self.ui.status = format!("MIDI: {first}");
         }
         self.midi_flags = Some(flags);
     }

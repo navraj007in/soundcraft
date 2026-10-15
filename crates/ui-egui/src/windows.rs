@@ -502,7 +502,7 @@ pub fn midi_devices(app: &mut SoundApp, ctx: &egui::Context) {
     let ports_id = egui::Id::new("midi_ports");
     let mut ports = ctx.data(|d| d.get_temp::<Arc<soundcraft_playback::midi_io::PortList>>(ports_id));
     let mut refresh = false;
-    win(ctx, &mut open, "MIDI Input Devices", vec2(420.0, 360.0), |ui| {
+    win(ctx, &mut open, "MIDI Input Devices", vec2(440.0, 480.0), |ui| {
         let list = ports.get_or_insert_with(|| Arc::new(soundcraft_playback::midi_io::list_ports())).clone();
         let opened = app.player.as_ref().map(|p| p.open_midi_inputs()).unwrap_or_default();
         if list.inputs.is_empty() {
@@ -524,6 +524,46 @@ pub fn midi_devices(app: &mut SoundApp, ctx: &egui::Context) {
         ui.horizontal(|ui| {
             refresh = ui.button("Rescan").clicked();
         });
+        ui.separator();
+        ui.label("MIDI tracks send to");
+        let midi_tracks: Vec<(soundcraft_model::TrackId, String, Option<String>)> = app
+            .engine
+            .session()
+            .tracks
+            .iter()
+            .filter(|t| t.kind == soundcraft_model::TrackKind::Midi && t.instrument.is_none())
+            .map(|t| (t.id, t.name.clone(), if let soundcraft_model::Route::Hardware(n) = &t.mixer.output { Some(n.clone()) } else { None }))
+            .collect();
+        if midi_tracks.is_empty() {
+            ui.label(egui::RichText::new("No MIDI tracks without an instrument. Add one with Track › New.").small());
+        }
+        for (id, name, port) in midi_tracks {
+            ui.horizontal(|ui| {
+                ui.label(&name);
+                let shown = port.clone().unwrap_or_else(|| "No port".to_string());
+                egui::ComboBox::from_id_salt(("midi-out", id.0)).selected_text(shown).show_ui(ui, |ui| {
+                    if ui.selectable_label(port.is_none(), "No port").clicked() {
+                        let _ = app.run("midi.track_output", json!({"tracks": [id.0], "port": null}));
+                    }
+                    for out in &list.outputs {
+                        if ui.selectable_label(port.as_deref() == Some(out.as_str()), out).clicked() {
+                            let _ = app.run("midi.track_output", json!({"tracks": [id.0], "port": out}));
+                        }
+                    }
+                });
+            });
+        }
+        if !list.outputs.is_empty() {
+            ui.separator();
+            ui.label("Pass the keyboard through to");
+            for out in &list.outputs {
+                let mut on = app.engine.session().edit.flag(&format!("midi.thru.{out}"));
+                if crate::widgets::checkbox(ui, &mut on, out).changed() {
+                    let key = if on { "enable" } else { "disable" };
+                    let _ = app.run("setup.midi_thru", json!({ key: [out] }));
+                }
+            }
+        }
         ui.separator();
         ui.label("Record these kinds of message");
         for (kind, label) in [

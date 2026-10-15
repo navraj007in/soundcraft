@@ -10,8 +10,15 @@
 //! messages (clock, sysex, active sensing) are dropped here.
 
 use soundcraft_time::Samples;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+use std::cmp::Reverse;
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+use std::collections::BinaryHeap;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+use std::time::Duration;
+use std::time::Instant;
 
 /// The system's MIDI ports, by name.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -87,6 +94,33 @@ impl Ring {
         }
         self.head.store(head.wrapping_add(1), Ordering::Release);
         true
+    }
+
+    /// Two words as one unit (a reader never sees half). `false` when there is no room for both.
+    fn push2(&self, a: u64, b: u64) -> bool {
+        let head = self.head.load(Ordering::Relaxed);
+        if head.wrapping_sub(self.tail.load(Ordering::Acquire)).saturating_add(2) > self.slots.len() {
+            return false;
+        }
+        for (i, w) in [a, b].into_iter().enumerate() {
+            if let Some(slot) = self.slots.get(head.wrapping_add(i) & self.mask) {
+                slot.store(w, Ordering::Relaxed);
+            }
+        }
+        self.head.store(head.wrapping_add(2), Ordering::Release);
+        true
+    }
+
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows", target_os = "linux")), allow(dead_code))]
+    fn pop2(&self) -> Option<(u64, u64)> {
+        let tail = self.tail.load(Ordering::Relaxed);
+        if self.head.load(Ordering::Acquire).wrapping_sub(tail) < 2 {
+            return None;
+        }
+        let word = |i: usize| self.slots.get(tail.wrapping_add(i) & self.mask).map_or(0, |s| s.load(Ordering::Relaxed));
+        let out = (word(0), word(1));
+        self.tail.store(tail.wrapping_add(2), Ordering::Release);
+        Some(out)
     }
 
     fn pop(&self) -> Option<u64> {
@@ -227,6 +261,208 @@ impl MidiInputs {
     }
 }
 
+/// A stable 32-bit name for a port (FNV-1a): what the audio callback stamps on a message so the
+/// output thread can find the connection without the callback touching any string table.
+pub fn port_hash(name: &str) -> u32 {
+    name.bytes().fold(0x811c_9dc5u32, |h, b| (h ^ u32::from(b)).wrapping_mul(0x0100_0193))
+}
+
+/// Most distinct Thru ports at once.
+pub const MAX_THRU: usize = 4;
+
+/// What the audio callback and the output thread share: timed messages for output ports.
+pub struct MidiOutShared {
+    /// Two words per message: when it is due (microseconds since `epoch`), then port hash and bytes.
+    ring: Ring,
+    epoch: Instant,
+    /// Ports (by hash; 0 = unused) that receive everything played on the input devices.
+    thru: [AtomicU32; MAX_THRU],
+    dropped: AtomicU32,
+}
+
+impl MidiOutShared {
+    pub fn new() -> Arc<MidiOutShared> {
+        Arc::new(MidiOutShared {
+            ring: Ring::new(RING_WORDS * 2),
+            epoch: Instant::now(),
+            thru: std::array::from_fn(|_| AtomicU32::new(0)),
+            dropped: AtomicU32::new(0),
+        })
+    }
+
+    /// Microseconds since the hub started: the clock `due` is on.
+    pub fn now_us(&self) -> u64 {
+        u64::try_from(self.epoch.elapsed().as_micros()).unwrap_or(u64::MAX)
+    }
+
+    /// From the audio callback only (single producer): queue `msg` for the port with `hash`, due at
+    /// `due_us`. Never blocks; a full ring drops the message and counts it.
+    pub fn send(&self, hash: u32, due_us: u64, msg: [u8; 3]) {
+        if !self.ring.push2(due_us, u64::from(hash) << 24 | u64::from(pack(msg))) {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Ports that receive the input devices' messages as they are played (ports by name).
+    pub fn set_thru(&self, names: &[String]) {
+        for (i, slot) in self.thru.iter().enumerate() {
+            slot.store(names.get(i).map_or(0, |n| port_hash(n)), Ordering::Relaxed);
+        }
+    }
+
+    /// From the audio callback: forward a message from an input device to the Thru ports.
+    pub fn thru(&self, due_us: u64, msg: [u8; 3]) {
+        for slot in &self.thru {
+            let hash = slot.load(Ordering::Relaxed);
+            if hash != 0 {
+                self.send(hash, due_us, msg);
+            }
+        }
+    }
+
+    pub fn take_dropped(&self) -> u32 {
+        self.dropped.swap(0, Ordering::Relaxed)
+    }
+
+    /// The next queued message: (due, port hash, bytes). The output thread's; also how tests read.
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows", target_os = "linux")), allow(dead_code))]
+    pub(crate) fn pop(&self) -> Option<(u64, u32, [u8; 3])> {
+        let (due, rest) = self.ring.pop2()?;
+        Some((due, (rest >> 24) as u32, unpack((rest & 0xFF_FFFF) as u32)))
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+struct OutConn {
+    name: String,
+    hash: u32,
+    conn: midir::MidiOutputConnection,
+}
+
+/// The open output ports, and the thread that sends messages to them when they are due.
+pub struct MidiOutputs {
+    shared: Arc<MidiOutShared>,
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    conns: Arc<Mutex<Vec<OutConn>>>,
+    stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl MidiOutputs {
+    pub fn new(shared: Arc<MidiOutShared>) -> MidiOutputs {
+        let stop = Arc::new(AtomicBool::new(false));
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        let conns: Arc<Mutex<Vec<OutConn>>> = Arc::default();
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        let thread = {
+            let (sh, st, cs) = (Arc::clone(&shared), Arc::clone(&stop), Arc::clone(&conns));
+            std::thread::Builder::new().name("soundcraft-midi-out".into()).spawn(move || output_loop(&sh, &st, &cs)).ok()
+        };
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        let thread = None;
+        MidiOutputs {
+            shared,
+            #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+            conns,
+            stop,
+            thread,
+        }
+    }
+
+    pub fn shared(&self) -> &Arc<MidiOutShared> {
+        &self.shared
+    }
+
+    /// Names of the output ports currently open.
+    pub fn open_names(&self) -> Vec<String> {
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        {
+            self.conns.lock().unwrap_or_else(PoisonError::into_inner).iter().map(|c| c.name.clone()).collect()
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        Vec::new()
+    }
+
+    /// Open exactly the output ports called `names` (closing any others). Returns one message per
+    /// port that could not be opened; a port that is not plugged in is skipped.
+    pub fn set_enabled(&mut self, names: &[String]) -> Vec<String> {
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        {
+            let mut conns = self.conns.lock().unwrap_or_else(PoisonError::into_inner);
+            conns.retain(|c| names.contains(&c.name));
+            let mut problems = Vec::new();
+            for name in names {
+                if conns.iter().any(|c| &c.name == name) {
+                    continue;
+                }
+                let out = match midir::MidiOutput::new("SoundCraft output") {
+                    Ok(o) => o,
+                    Err(e) => {
+                        problems.push(format!("MIDI is not available: {e}"));
+                        break;
+                    }
+                };
+                let Some(port) = out.ports().into_iter().find(|p| out.port_name(p).is_ok_and(|n| n == *name)) else { continue };
+                match out.connect(&port, "SoundCraft out") {
+                    Ok(conn) => conns.push(OutConn { name: name.clone(), hash: port_hash(name), conn }),
+                    Err(e) => problems.push(format!("{name}: {e}")),
+                }
+            }
+            problems
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        {
+            let _ = names;
+            Vec::new()
+        }
+    }
+}
+
+impl Drop for MidiOutputs {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(t) = self.thread.take() {
+            t.thread().unpark();
+            let _ = t.join();
+        }
+    }
+}
+
+/// Sends each message when it falls due: the callback queues a block's messages ahead of time with
+/// their offsets, this holds them until their moment (to about a millisecond).
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+fn output_loop(shared: &MidiOutShared, stop: &AtomicBool, conns: &Mutex<Vec<OutConn>>) {
+    const MAX_PENDING: usize = 1 << 16;
+    let mut pending: BinaryHeap<Reverse<(u64, u64, u32, [u8; 3])>> = BinaryHeap::new();
+    let mut seq = 0u64;
+    while !stop.load(Ordering::Acquire) {
+        while let Some((due, hash, msg)) = shared.pop() {
+            if pending.len() < MAX_PENDING {
+                pending.push(Reverse((due, seq, hash, msg)));
+                seq += 1;
+            }
+        }
+        let now = shared.now_us();
+        let mut sleep = 2_000u64;
+        while let Some(Reverse((due, _, hash, msg))) = pending.peek().copied() {
+            if due > now {
+                sleep = sleep.min(due - now);
+                break;
+            }
+            pending.pop();
+            let mut cs = conns.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(c) = cs.iter_mut().find(|c| c.hash == hash) {
+                let n = match msg[0] & 0xF0 {
+                    0xC0 | 0xD0 => 2,
+                    _ => 3,
+                };
+                let _ = c.conn.send(msg.get(..n).unwrap_or(&msg));
+            }
+        }
+        std::thread::park_timeout(Duration::from_micros(sleep.max(200)));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,6 +527,54 @@ mod tests {
         assert_eq!(live.len(), 4);
         shared.drain_into(&mut live, 8, None);
         assert_eq!(live.len(), 8, "the rest waits for the next block");
+    }
+
+    #[test]
+    fn output_messages_keep_their_due_time_port_and_bytes_in_order() {
+        let out = MidiOutShared::new();
+        out.send(port_hash("Synth A"), 1_000, [0x92, 60, 100]);
+        out.send(port_hash("Synth B"), 2_500, [0xC1, 5, 0]);
+        assert_eq!(out.pop(), Some((1_000, port_hash("Synth A"), [0x92, 60, 100])));
+        assert_eq!(out.pop(), Some((2_500, port_hash("Synth B"), [0xC1, 5, 0])));
+        assert_eq!(out.pop(), None);
+        assert_ne!(port_hash("Synth A"), port_hash("Synth B"));
+    }
+
+    #[test]
+    fn a_full_output_ring_drops_whole_messages_and_counts_them() {
+        let out = MidiOutShared::new();
+        for i in 0..(RING_WORDS * 2) {
+            out.send(7, i as u64, [0x90, 60, 1]);
+        }
+        let dropped = out.take_dropped();
+        assert!(dropped > 0);
+        let mut got = 0;
+        while let Some((due, hash, msg)) = out.pop() {
+            assert_eq!((hash, msg), (7, [0x90, 60, 1]), "no half-written message ever shows");
+            assert_eq!(due, got as u64);
+            got += 1;
+        }
+        assert_eq!(got as u32 + dropped, (RING_WORDS * 2) as u32);
+    }
+
+    #[test]
+    fn thru_forwards_to_every_chosen_port_and_only_those() {
+        let out = MidiOutShared::new();
+        out.thru(0, [0x90, 60, 100]);
+        assert_eq!(out.pop(), None, "no Thru port chosen");
+        out.set_thru(&["A".into(), "B".into()]);
+        out.thru(5, [0x90, 61, 100]);
+        assert_eq!((out.pop().map(|e| e.1), out.pop().map(|e| e.1)), (Some(port_hash("A")), Some(port_hash("B"))));
+        out.set_thru(&[]);
+        out.thru(5, [0x90, 62, 100]);
+        assert_eq!(out.pop(), None);
+    }
+
+    #[test]
+    fn the_output_thread_starts_and_stops_cleanly() {
+        let out = MidiOutputs::new(MidiOutShared::new());
+        assert!(out.open_names().is_empty());
+        drop(out);
     }
 
     #[test]

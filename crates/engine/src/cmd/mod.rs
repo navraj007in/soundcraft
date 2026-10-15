@@ -20,6 +20,7 @@ mod file;
 mod health;
 mod instrument;
 mod midi;
+pub mod midi_ports;
 mod mix;
 mod more_util;
 mod options;
@@ -134,6 +135,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(surround::specs());
         v.extend(plugin_state::specs());
         v.extend(session_info::specs());
+        v.extend(midi_ports::specs());
         v.extend(instrument::specs());
         v.extend(sampler::specs());
         v.extend(video::specs());

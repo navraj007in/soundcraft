@@ -30,7 +30,7 @@ pub use devices::AudioConfig;
 
 use soundcraft_dsp::{Plugin, PluginEditor, PluginStateReader};
 use soundcraft_mix::{MAX_CHANNELS, MixEngine, PreparedInstance, StripMeter, itu_stereo_fold, main_channels};
-use soundcraft_model::{Session, TrackId};
+use soundcraft_model::{Route, Session, TrackId};
 use soundcraft_time::{Range, Samples};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
@@ -75,6 +75,8 @@ enum Cmd {
     Locate(Samples),
     /// Where MIDI device messages arrive.
     Midi(Arc<midi_io::MidiShared>),
+    /// Where messages for MIDI output ports go.
+    MidiOut(Arc<midi_io::MidiOutShared>),
     /// The document was replaced: drop every plugin instance (they belong to the old one).
     ResetSession,
 }
@@ -178,6 +180,8 @@ struct AudioState {
     old_sessions: Option<SyncSender<Arc<Session>>>,
     /// MIDI device messages (see [`midi_io`]).
     midi: Option<Arc<midi_io::MidiShared>>,
+    /// Where MIDI tracks routed to hardware ports and the Thru ports get their messages.
+    midi_out: Option<Arc<midi_io::MidiOutShared>>,
 }
 
 fn new_engine(sr: f32) -> MixEngine {
@@ -195,6 +199,7 @@ impl AudioState {
             garbage,
             old_sessions: None,
             midi: None,
+            midi_out: None,
             fold: fold_gains(&session),
             rx,
             shared,
@@ -248,20 +253,24 @@ impl AudioState {
                     self.pending_len = 0;
                     self.read = 0.0;
                     self.mix.reset();
+                    self.send_midi_out();
                 }
                 Cmd::Stop => {
                     self.playing = false;
                     self.end = None;
                     self.looped = None;
                     self.mix.reset();
+                    self.send_midi_out();
                 }
                 Cmd::Locate(at) => {
                     self.pos = at;
                     self.pending_len = 0;
                     self.read = 0.0;
                     self.mix.reset();
+                    self.send_midi_out();
                 }
                 Cmd::Midi(m) => self.midi = Some(m),
+                Cmd::MidiOut(m) => self.midi_out = Some(m),
                 Cmd::ResetSession => {
                     let sr = self.session.sample_rate.as_f64() as f32;
                     let mut old = std::mem::replace(&mut self.mix, new_engine(sr));
@@ -280,6 +289,23 @@ impl AudioState {
         }
         self.send_garbage();
         self.shared.playing.store(self.playing, Ordering::Relaxed);
+    }
+
+    /// Hand what MIDI tracks routed to hardware ports produced (or released) to the output thread,
+    /// each message timed by its offset in the block.
+    fn send_midi_out(&mut self) {
+        if self.mix.midi_out.is_empty() {
+            return;
+        }
+        if let Some(out) = &self.midi_out {
+            let (now, rate) = (out.now_us(), u64::from(self.session.sample_rate.hz().max(1)));
+            for ev in &self.mix.midi_out {
+                if let Some(Route::Hardware(port)) = self.session.track(ev.track).map(|t| &t.mixer.output) {
+                    out.send(midi_io::port_hash(port), now + u64::from(ev.offset) * 1_000_000 / rate, ev.msg);
+                }
+            }
+        }
+        self.mix.midi_out.clear();
     }
 
     fn send_garbage(&mut self) {
@@ -331,9 +357,16 @@ impl AudioState {
         if let Some(m) = &self.midi {
             let at = (self.playing && self.recording).then_some(self.pos);
             m.drain_into(&mut self.mix.live_midi, soundcraft_mix::LIVE_MIDI_CAPACITY, at);
+            if let Some(out) = &self.midi_out {
+                let now = out.now_us();
+                for msg in &self.mix.live_midi {
+                    out.thru(now, *msg);
+                }
+            }
         }
         self.mix.render(&self.session, self.pos, n, &mut self.pending);
         self.mix.live_midi.clear();
+        self.send_midi_out();
         self.send_garbage();
         self.pending_len = n;
         if let Ok(mut m) = self.shared.meters.try_lock() {
@@ -444,6 +477,8 @@ struct Side {
     old_sessions: Option<Receiver<Arc<Session>>>,
     /// The open MIDI input devices and what they share with the audio callback.
     midi: Option<(midi_io::MidiInputs, Arc<midi_io::MidiShared>)>,
+    /// The open MIDI output ports and the thread that times messages to them.
+    midi_out: Option<midi_io::MidiOutputs>,
 }
 
 impl Side {
@@ -457,6 +492,7 @@ impl Side {
             garbage,
             old_sessions: None,
             midi: None,
+            midi_out: None,
         }
     }
 
@@ -464,6 +500,9 @@ impl Side {
         let shared = midi_io::MidiShared::new();
         let _ = tx.send(Cmd::Midi(Arc::clone(&shared)));
         self.midi = Some((midi_io::MidiInputs::new(Arc::clone(&shared)), shared));
+        let out = midi_io::MidiOutShared::new();
+        let _ = tx.send(Cmd::MidiOut(Arc::clone(&out)));
+        self.midi_out = Some(midi_io::MidiOutputs::new(out));
     }
 
     /// Drops retired instances (closing their editors first, inside the plugin's drop) and
@@ -734,6 +773,23 @@ impl Player {
     /// Open exactly the MIDI input ports called `names`; returns what could not be opened.
     pub fn set_midi_inputs(&self, names: &[String]) -> Vec<String> {
         self.side().midi.as_mut().map_or_else(Vec::new, |(inputs, _)| inputs.set_enabled(names))
+    }
+
+    /// Open exactly the MIDI output ports called `names`; returns what could not be opened.
+    pub fn set_midi_outputs(&self, names: &[String]) -> Vec<String> {
+        self.side().midi_out.as_mut().map_or_else(Vec::new, |o| o.set_enabled(names))
+    }
+
+    /// The MIDI output ports currently open.
+    pub fn open_midi_outputs(&self) -> Vec<String> {
+        self.side().midi_out.as_ref().map_or_else(Vec::new, midi_io::MidiOutputs::open_names)
+    }
+
+    /// Send everything played on the input devices on to these output ports as well (MIDI Thru).
+    pub fn set_midi_thru(&self, names: &[String]) {
+        if let Some(o) = &self.side().midi_out {
+            o.shared().set_thru(names);
+        }
     }
 
     /// The MIDI input ports currently open.
@@ -1255,6 +1311,52 @@ mod tests {
                 self.1.fetch_add(1, Ordering::SeqCst);
             }
         }
+    }
+
+    #[test]
+    fn a_midi_track_on_a_port_reaches_the_output_ring_timed_and_the_keyboard_thrus() {
+        use soundcraft_model::{ChannelFormat, Clip, ClipId, TrackKind};
+        let mut s = soundcraft_model::Session::default();
+        let t = s.add_track(TrackKind::Midi, ChannelFormat::Mono, None);
+        let mut seq = soundcraft_midi::Sequence::default();
+        seq.notes.push(soundcraft_midi::Note { start: 4, length: 10, pitch: 60, velocity: 100, release_velocity: 0, channel: 3 });
+        let tr = s.track_mut(t).unwrap();
+        tr.mixer.output = Route::Hardware("Synth".into());
+        tr.playlist_mut().unwrap().clips.push(Clip::midi(ClipId(900), "m", 0, 48_000, seq));
+        let shared = Arc::new(Shared {
+            position: AtomicI64::new(0),
+            playing: AtomicBool::new(false),
+            speed: AtomicU32::new(1000),
+            meters: Mutex::new(MeterSnapshot::default()),
+        });
+        let (tx, rx) = channel();
+        let (gtx, _grx) = channel();
+        let mut st = AudioState::new(rx, shared, Arc::new(s), 48_000.0, gtx);
+        let out = midi_io::MidiOutShared::new();
+        out.set_thru(&["Thru Synth".to_string()]);
+        tx.send(Cmd::MidiOut(Arc::clone(&out))).unwrap();
+        let midi = midi_io::MidiShared::new();
+        tx.send(Cmd::Midi(Arc::clone(&midi))).unwrap();
+        tx.send(Cmd::Play { from: 0, end: None, looped: None }).unwrap();
+        midi.push_input([0x90, 72, 80]);
+        let mut buf = vec![0.0f32; 1024];
+        st.fill(&mut buf, 2);
+        let mut sent = Vec::new();
+        while let Some(e) = out.pop() {
+            sent.push(e);
+        }
+        let synth: Vec<_> = sent.iter().filter(|e| e.1 == midi_io::port_hash("Synth")).collect();
+        assert_eq!(synth.len(), 2, "{sent:?}");
+        assert_eq!((synth[0].2, synth[1].2), ([0x93, 60, 100], [0x83, 60, 0]));
+        // 4 ticks and 14 ticks at 25 samples each: 100 and 350 samples after the block start.
+        let gap = synth[1].0 - synth[0].0;
+        assert!((gap as i64 - 250 * 1_000_000 / 48_000).abs() <= 2, "the note-off is 250 samples after the note-on: {gap} us");
+        let thru: Vec<_> = sent.iter().filter(|e| e.1 == midi_io::port_hash("Thru Synth")).map(|e| e.2).collect();
+        assert_eq!(thru, vec![[0x90, 72, 80]], "the keyboard is passed through to the Thru port");
+        // Stopping with a note down releases it on the port.
+        tx.send(Cmd::Stop).unwrap();
+        st.fill(&mut buf, 2);
+        while out.pop().is_some() {}
     }
 
     #[test]

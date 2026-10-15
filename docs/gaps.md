@@ -16,7 +16,7 @@ When you close a gap, delete its entry (or shrink it) in the same PR, and bump t
 | # | Gap | Dimension | Doc | Est. (h) |
 |---|---|---|---|---:|
 | G-01 | **Alpha blocker.** No channel routing or duplex low-latency path (device, rate and buffer choice done; ASIO opt-in) | Hardware | [hardware-parity.md](hardware-parity.md) | 15–25 |
-| G-02 | **Alpha blocker.** No MIDI output to external gear, no Thru or clock (MIDI input and recording are done) | Hardware / MIDI | [hardware-parity.md](hardware-parity.md) | 20–35 |
+| G-02 | MIDI clock and MTC out, per-device channel assignment, output latency compensation (MIDI in/out, Thru and recording are done) | Hardware / MIDI | [hardware-parity.md](hardware-parity.md) | 20–35 |
 | G-03 | **Alpha blocker.** Cannot exchange sessions with Pro Tools (no AAF/OMF, no `.ptx`) | File formats | [file-format-parity.md](file-format-parity.md) | 50–90 |
 | G-04 | Open correctness bugs in features counted as done (~25 issues) | Stability | this file | 25–40 |
 | G-05 | (Entitlement part: alpha blocker for the mix row) Third-party VST3s blocked in the signed macOS build; AU editors missing | Ecosystem | [plugin-parity.md](plugin-parity.md) | 15–25 |
@@ -28,7 +28,7 @@ When you close a gap, delete its entry (or shrink it) in the same PR, and bump t
 | G-11 | No external sync (MTC, LTC, MIDI clock, video reference) | Hardware | [hardware-parity.md](hardware-parity.md) | 15–25 |
 | G-12 | Immersive delivery: no Dolby Atmos/ADM BWF, MPEG-H, binaural | Features | [file-format-parity.md](file-format-parity.md) | 50–80 |
 | G-13 | Sidechain inputs, ARA, out-of-process plugin sandboxing | Ecosystem | [plugin-parity.md](plugin-parity.md) | 30–50 |
-| G-14 | Windows/Linux/Web exercised only lightly at runtime; no PR CI running the tests | Platforms / Stability | this file | 20–40 |
+| G-14 | Windows/Linux/Web exercised only lightly at runtime; PR CI runs the tests on macOS only | Platforms / Stability | this file | 20–40 |
 | G-15 | Elastic Audio depth: one algorithm, no Elastic Pitch | Features | [target-app-parity.md](target-app-parity.md) | 30–45 |
 | G-16 | Session templates, track presets, workspace browser, batch rename | Features | [target-app-parity.md](target-app-parity.md) | 25–40 |
 | G-17 | Video: HEVC/DNx decode, video export, external timecode | Features / Formats | [file-format-parity.md](file-format-parity.md) | 30–50 |
@@ -64,10 +64,13 @@ When you close a gap, delete its entry (or shrink it) in the same PR, and bump t
   Devices enabled in Setup › MIDI › MIDI Input Devices play the instruments of record-armed or
   input-monitored tracks live, a take is recorded onto every armed MIDI and instrument track as a MIDI
   clip (one undo step, the input filter applied), and the on-screen keyboard sounds instruments too.
-- **Missing:** MIDI output to external synths from MIDI tracks, MIDI Thru, MIDI clock and MTC out,
-  per-device and per-channel track assignment, MIDI record merge/loop modes beyond a single pass.
-- **Impact:** MIDI production with hosted instruments works from a keyboard; external gear does not.
-- **Estimate:** ≈ 10–18 h for the remainder (output tracks, thru, clock out, assignment).
+- **Also done (2026-10-15):** MIDI tracks routed to an output port (`midi.track_output`) send their
+  notes and controllers to external gear on their own channels, timed to about a millisecond by an
+  output thread, with note-offs on stop and seek; Thru ports (`setup.midi_thru`) pass the keyboard on.
+- **Missing:** MIDI clock and MTC out (G-11), per-channel device assignment, compensation for the
+  output's latency, record merge/loop modes beyond a single pass.
+- **Impact:** MIDI production works with hosted instruments and external gear; needs a hardware check.
+- **Estimate:** ≈ 5–8 h for the remainder.
 
 ### G-03. Session interchange with Pro Tools
 
@@ -154,9 +157,10 @@ cannot be hosted (#109): Avid's AAX SDK licence and PACE signing; owner decision
 
 ### G-14. Platforms and CI
 
-Only `freebsd.yml` and `windows-arm64.yml` run on pull requests, and only for manifest paths;
-nothing runs `cargo xtask ci` on PRs. Windows and Linux have startup and rendering reports
-(#41, #45, #107, #142). ≈ 20–40 h (a PR CI matrix plus runtime smoke tests on three OSes).
+`ci.yml` runs `cargo xtask ci` on macOS for every pull request that touches code (added
+2026-10-15); `freebsd.yml` and `windows-arm64.yml` run only for manifest paths. Windows and Linux
+have startup and rendering reports (#41, #45, #107, #142) and no PR runner yet. ≈ 15–30 h (Windows
+and Linux runners plus runtime smoke tests on three OSes).
 
 ### G-15. Elastic Audio depth
 
@@ -201,6 +205,8 @@ missing. Out of scope unless the owner decides otherwise.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | G-14: PR CI runs the gate on macOS |
+| 2026-10-15 | minor | G-02 shrunk again: MIDI output ports and Thru done; no longer an alpha blocker |
 | 2026-10-15 | minor | G-02 shrunk: MIDI input devices, live play and MIDI recording done |
 | 2026-10-15 | minor | G-06: recording to disk is done, so it is no longer an alpha blocker; what remains is whole-file decoding and whole-render buffers |
 | 2026-10-12 | minor | G-01 shrunk: audio device, rate and buffer choice; opt-in ASIO |

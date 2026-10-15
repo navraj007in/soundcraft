@@ -227,7 +227,11 @@ struct Strip {
     /// MIDI notes currently sounding on the instrument (pitch), for note-offs at stops/seek.
     /// Notes sounding on the instrument: pitch and the sample their note-off is due at. Kept apart
     /// from clips so a note-off still arrives after its clip stops overlapping the block.
-    held: Vec<(u8, Samples)>,
+    held: Vec<(u8, u8, Samples)>,
+    /// MIDI this strip sends to external gear this block (a MIDI track with a hardware output and
+    /// no hosted instrument), and the track that owns them once it has done so.
+    midi_out: Vec<MidiOut>,
+    external: Option<TrackId>,
     /// The instrument's next block starts somewhere new: send it the controllers in effect there.
     chase: bool,
     muted: bool,
@@ -326,6 +330,8 @@ impl Strip {
             instrument: None,
             sample: None,
             held: Vec::with_capacity(MAX_HELD),
+            midi_out: Vec::new(),
+            external: None,
             chase: true,
             muted: false,
             gr: 0.0,
@@ -382,6 +388,10 @@ pub struct MixEngine {
     /// set by the audio host before each `render`. They play the instruments of record-armed or
     /// input-monitored tracks; the host clears them afterwards.
     pub live_midi: Vec<[u8; 3]>,
+    /// MIDI that MIDI tracks routed to a hardware port produced this block, in track order, for
+    /// the audio host to send; the host clears it after reading. Also filled by [`MixEngine::reset`]
+    /// (note-offs for what was sounding).
+    pub midi_out: Vec<MidiOut>,
     /// Mix the metronome (Options > Click) into the output. Playback turns this on; offline renders
     /// (bounces, stems, exports) leave it off so the click is never printed into a file.
     pub metronome: bool,
@@ -468,6 +478,7 @@ impl MixEngine {
             monitor_only: false,
             recording: false,
             live_midi: Vec::with_capacity(LIVE_MIDI_CAPACITY),
+            midi_out: Vec::with_capacity(MIDI_OUT_CAPACITY),
             metronome: false,
             external: false,
             adopt: HashMap::new(),
@@ -558,7 +569,10 @@ impl MixEngine {
                 i.plugin.reset();
                 i.failed = false;
             }
-            s.held.clear();
+            match s.external {
+                Some(track) => release_held(&mut s.held, &mut self.midi_out, track, 0),
+                None => s.held.clear(),
+            }
             s.clear_delays();
             s.chase = true;
         }
@@ -673,7 +687,10 @@ impl MixEngine {
                 if let Some(i) = &mut st.instrument {
                     i.plugin.all_notes_off();
                 }
-                st.held.clear();
+                match st.external {
+                    Some(track) => release_held(&mut st.held, &mut st.midi_out, track, 0),
+                    None => st.held.clear(),
+                }
                 st.clear_delays();
                 st.chase = true;
             }
@@ -838,6 +855,11 @@ impl MixEngine {
             }
         }
         self.main_meter.measure(&self.main, frames, 0.0);
+        // What MIDI tracks routed to hardware ports sent this block.
+        for st in self.strips.values_mut().filter(|st| !st.midi_out.is_empty()) {
+            let room = MIDI_OUT_CAPACITY.saturating_sub(self.midi_out.len());
+            self.midi_out.extend(st.midi_out.drain(..).take(room));
+        }
     }
 
     /// The delay-compensation latency of the audio written onto `bus`: when its slowest feeder
@@ -1102,6 +1124,21 @@ fn process_strip(
                     build_matrix(src.fmt, ns, dst_fmt, nd, &PanSpec { stereo, surround: None }, PanLaw::Minus3)
                 };
                 apply_matrix(&src.buf, frames, &mut strip.buf, &m, 1.0);
+            }
+        }
+        // A MIDI track with a hardware output and no instrument plays external gear.
+        TrackKind::Midi if t.instrument.is_none() && matches!(t.mixer.output, Route::Hardware(_)) => {
+            let silent = t.mixer.mute || any_solo && !t.mixer.solo && !t.mixer.solo_safe && !implicit_solo.contains(&t.id);
+            strip.external = Some(t.id);
+            if strip.midi_out.capacity() < MIDI_OUT_PER_STRIP {
+                strip.midi_out.reserve(MIDI_OUT_PER_STRIP);
+            }
+            if live.monitor_only || silent {
+                // Not playing, or silenced: whatever was sounding is released.
+                release_held(&mut strip.held, &mut strip.midi_out, t.id, 0);
+            } else {
+                let mut sink = OutSink { events: &mut strip.midi_out, track: t.id };
+                schedule_notes(s, t, pos, frames, &mut sink, &mut strip.held);
             }
         }
         TrackKind::Instrument | TrackKind::Midi => {
@@ -1771,6 +1808,81 @@ fn render_clip(s: &Session, clip: &Clip, pos: Samples, frames: usize, buf: &mut 
     }
 }
 
+/// A MIDI message a MIDI track sends to the hardware output port it is routed to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MidiOut {
+    /// The MIDI track it came from (its `output` route names the port).
+    pub track: TrackId,
+    /// Samples after the start of the block it was rendered in.
+    pub offset: u32,
+    pub msg: [u8; 3],
+}
+
+/// Most messages one MIDI track sends in a block, and all of them together.
+const MIDI_OUT_PER_STRIP: usize = 512;
+pub const MIDI_OUT_CAPACITY: usize = 2048;
+
+/// Where a MIDI track's notes and controllers go: a hosted instrument, or an external port.
+trait MidiSink {
+    fn note_on(&mut self, channel: u8, offset: usize, pitch: u8, velocity: u8);
+    fn note_off(&mut self, channel: u8, offset: usize, pitch: u8);
+    /// A controller-style message already encoded on channel 1 (status low nibble 0).
+    fn midi(&mut self, channel: u8, offset: usize, msg: [u8; 3]);
+}
+
+/// A hosted instrument has no channel on its note calls (it hears everything as one channel).
+impl MidiSink for PluginSlot {
+    fn note_on(&mut self, _channel: u8, offset: usize, pitch: u8, velocity: u8) {
+        self.plugin.note_on(offset, pitch, velocity);
+    }
+    fn note_off(&mut self, _channel: u8, offset: usize, pitch: u8) {
+        self.plugin.note_off(offset, pitch);
+    }
+    fn midi(&mut self, _channel: u8, offset: usize, msg: [u8; 3]) {
+        self.plugin.midi(offset, msg);
+    }
+}
+
+/// Note-offs for every note still sounding on external gear, at `offset` into the block.
+fn release_held(held: &mut Vec<(u8, u8, Samples)>, out: &mut Vec<MidiOut>, track: TrackId, offset: u32) {
+    let mut sink = OutSink { events: out, track };
+    let mut channels = 0u16;
+    for (channel, pitch, _) in held.drain(..) {
+        sink.note_off(channel, offset as usize, pitch);
+        channels |= 1 << (channel & 0x0F);
+    }
+    // And "all notes off" on each channel that had one, for gear that missed a message.
+    for channel in (0..16u8).filter(|c| channels & (1 << c) != 0) {
+        sink.push(offset as usize, [0xB0 | channel, 123, 0]);
+    }
+}
+
+/// External gear: each message keeps its channel.
+struct OutSink<'a> {
+    events: &'a mut Vec<MidiOut>,
+    track: TrackId,
+}
+
+impl OutSink<'_> {
+    fn push(&mut self, offset: usize, msg: [u8; 3]) {
+        if self.events.len() < MIDI_OUT_PER_STRIP {
+            self.events.push(MidiOut { track: self.track, offset: u32::try_from(offset).unwrap_or(u32::MAX), msg });
+        }
+    }
+}
+
+impl MidiSink for OutSink<'_> {
+    fn note_on(&mut self, channel: u8, offset: usize, pitch: u8, velocity: u8) {
+        self.push(offset, [0x90 | (channel & 0x0F), pitch & 0x7F, velocity & 0x7F]);
+    }
+    fn note_off(&mut self, channel: u8, offset: usize, pitch: u8) {
+        self.push(offset, [0x80 | (channel & 0x0F), pitch & 0x7F, 0]);
+    }
+    fn midi(&mut self, channel: u8, offset: usize, msg: [u8; 3]) {
+        self.push(offset, [(msg[0] & 0xF0) | (channel & 0x0F), msg[1], msg[2]]);
+    }
+}
+
 /// Most simultaneous notes tracked per instrument.
 const MAX_HELD: usize = 128;
 
@@ -1791,16 +1903,16 @@ fn midi_offset(s: &Session, t: &Track) -> i64 {
 /// Send note on/offs and controllers for MIDI clips overlapping the block, and the offs still owed
 /// from earlier blocks (a note that ends on a block edge, or whose clip was trimmed or removed while
 /// sounding).
-fn schedule_notes(s: &Session, t: &Track, pos: Samples, frames: usize, inst: &mut PluginSlot, held: &mut Vec<(u8, Samples)>) {
+fn schedule_notes(s: &Session, t: &Track, pos: Samples, frames: usize, sink: &mut impl MidiSink, held: &mut Vec<(u8, u8, Samples)>) {
     let sr = s.sample_rate;
     // MIDI Track Offsets: the track's notes sound `offset` samples later (earlier if negative), so
     // the block looks that far back into the clips.
     let offset = midi_offset(s, t);
     let pos = pos.saturating_sub(offset);
     let end = pos.saturating_add(frames as i64);
-    held.retain(|&(pitch, off)| {
+    held.retain(|&(channel, pitch, off)| {
         if off < end {
-            inst.plugin.note_off(usize::try_from(off.saturating_sub(pos)).unwrap_or(0), pitch);
+            sink.note_off(channel, usize::try_from(off.saturating_sub(pos)).unwrap_or(0), pitch);
             false
         } else {
             true
@@ -1839,11 +1951,11 @@ fn schedule_notes(s: &Session, t: &Track, pos: Samples, frames: usize, inst: &mu
                 continue;
             }
             if on >= pos && on < end {
-                inst.plugin.note_on(usize::try_from(on - pos).unwrap_or(0), n.pitch, n.velocity);
+                sink.note_on(n.channel, usize::try_from(on - pos).unwrap_or(0), n.pitch, n.velocity);
                 if off < end {
-                    inst.plugin.note_off(usize::try_from(off.saturating_sub(pos)).unwrap_or(0), n.pitch);
+                    sink.note_off(n.channel, usize::try_from(off.saturating_sub(pos)).unwrap_or(0), n.pitch);
                 } else if held.len() < MAX_HELD {
-                    held.push((n.pitch, off));
+                    held.push((n.channel, n.pitch, off));
                 }
             }
         }
@@ -1857,7 +1969,7 @@ fn schedule_notes(s: &Session, t: &Track, pos: Samples, frames: usize, inst: &mu
             }
             let at = s.tempo.tick_to_samples(base.saturating_add(tick), sr);
             if at >= pos && at < end && at < clip.end() {
-                inst.plugin.midi(usize::try_from(at - pos).unwrap_or(0), ctrl_message(c.kind, c.value, dp));
+                sink.midi(c.channel, usize::try_from(at - pos).unwrap_or(0), ctrl_message(c.kind, c.value, dp));
             }
         }
     }
@@ -3057,6 +3169,84 @@ mod tests {
         // Nothing left over: the next block without new messages sends nothing.
         m.render(&s, 0, 512, &mut out);
         assert_eq!(counts.iter().map(|c| c.load(Ordering::SeqCst)).collect::<Vec<_>>(), vec![2, 2, 0]);
+    }
+
+    fn external_session() -> (Session, TrackId) {
+        let mut s = Session::default();
+        let t = s.add_track(TrackKind::Midi, ChannelFormat::Mono, None);
+        let mut seq = soundcraft_midi::Sequence::default();
+        // 120 bpm, 960 ticks per quarter: 25 samples per tick at 48 kHz.
+        seq.notes.push(soundcraft_midi::Note { start: 0, length: 40, pitch: 60, velocity: 100, release_velocity: 0, channel: 2 });
+        seq.notes.push(soundcraft_midi::Note { start: 30, length: 100, pitch: 64, velocity: 90, release_velocity: 0, channel: 5 });
+        seq.ctrls.push(soundcraft_midi::CtrlEvent { tick: 10, channel: 2, kind: soundcraft_midi::CtrlKind::Cc(64), value: 127 });
+        let tr = s.track_mut(t).unwrap();
+        tr.mixer.output = Route::Hardware("Synth".into());
+        tr.playlist_mut().unwrap().clips.push(Clip::midi(ClipId(700), "m", 0, 48_000, seq));
+        (s, t)
+    }
+
+    #[test]
+    fn a_midi_track_routed_to_a_port_sends_its_notes_and_controllers_with_their_channels() {
+        let (s, t) = external_session();
+        let mut m = MixEngine::new(48000., 512);
+        let mut out = vec![vec![0.; 512]; 2];
+        let mut sent: Vec<(i64, [u8; 3])> = Vec::new();
+        for b in 0..8i64 {
+            m.render(&s, b * 512, 512, &mut out);
+            sent.extend(m.midi_out.drain(..).map(|e| {
+                assert_eq!(e.track, t);
+                (b * 512 + i64::from(e.offset), e.msg)
+            }));
+        }
+        sent.sort_by_key(|e| e.0);
+        assert_eq!(
+            sent,
+            vec![(0, [0x92, 60, 100]), (250, [0xB2, 64, 127]), (750, [0x95, 64, 90]), (1000, [0x82, 60, 0]), (3250, [0x85, 64, 0]),],
+            "sample-accurate, on the notes' own channels"
+        );
+    }
+
+    #[test]
+    fn a_seek_or_stop_releases_notes_sounding_on_external_gear() {
+        let (s, _) = external_session();
+        let mut out = vec![vec![0.; 512]; 2];
+        // After the first block only the channel-3 note (0..1000) is sounding; after the second, only
+        // the channel-6 one (750..3250).
+        for (blocks, channel, pitch) in [(1, 2u8, 60u8), (2, 5, 64)] {
+            let mut m = MixEngine::new(48000., 512);
+            for b in 0..blocks {
+                m.render(&s, b * 512, 512, &mut out);
+            }
+            m.midi_out.clear();
+            // Jump somewhere else: the held note is released at the start of that block.
+            m.render(&s, 20_000, 512, &mut out);
+            let msgs: Vec<[u8; 3]> = m.midi_out.drain(..).map(|e| e.msg).collect();
+            assert!(msgs.contains(&[0x80 | channel, pitch, 0]), "{msgs:?}");
+            assert!(msgs.contains(&[0xB0 | channel, 123, 0]), "all-notes-off on the channel used: {msgs:?}");
+            // Stopping releases it too, without another render.
+            let mut m = MixEngine::new(48000., 512);
+            for b in 0..blocks {
+                m.render(&s, b * 512, 512, &mut out);
+            }
+            m.midi_out.clear();
+            m.reset();
+            let msgs: Vec<[u8; 3]> = m.midi_out.drain(..).map(|e| e.msg).collect();
+            assert!(msgs.contains(&[0x80 | channel, pitch, 0]), "{msgs:?}");
+        }
+    }
+
+    #[test]
+    fn a_muted_or_stopped_midi_track_sends_nothing_new() {
+        let (mut s, t) = external_session();
+        s.track_mut(t).unwrap().mixer.mute = true;
+        let mut m = MixEngine::new(48000., 512);
+        let mut out = vec![vec![0.; 512]; 2];
+        m.render(&s, 0, 512, &mut out);
+        assert!(m.midi_out.is_empty());
+        s.track_mut(t).unwrap().mixer.mute = false;
+        m.monitor_only = true;
+        m.render(&s, 0, 512, &mut out);
+        assert!(m.midi_out.is_empty(), "a stopped transport plays no clips");
     }
 
     #[test]

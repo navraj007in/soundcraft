@@ -32,8 +32,8 @@ Legend: ✅ works · 🟡 partial · ❌ missing.
 | Feature | Pro Tools | SoundCraft (all platforms) |
 |---|---|---|
 | MIDI input devices (keyboards, pads) | ✅ | 🟡 CoreMIDI/WinMM/ALSA input via midir: enabled devices (Setup › MIDI › MIDI Input Devices) play armed instrument tracks live and record onto armed MIDI and instrument tracks as MIDI clips; no device-to-track assignment or channel filter yet |
-| MIDI output to external gear | ✅ | ❌ |
-| MIDI Thru, input filter | ✅ | 🟡 input filter drops message kinds from a take; no Thru to an output port |
+| MIDI output to external gear | ✅ | 🟡 MIDI tracks routed to an output port send notes and controllers on their own channels, timed to about a millisecond, with note-offs on stop and seek; no per-track device/channel menu beyond the port, no output latency compensation |
+| MIDI Thru, input filter | ✅ | ✅ Thru ports (Setup › MIDI › MIDI Thru) pass the keyboard on; the input filter drops message kinds from a take |
 | MIDI Beat Clock out, MTC generate/chase | ✅ | ❌ |
 | MIDI learn / controller mapping | ✅ (via surfaces and plug-in maps) | ❌ |
 | Virtual MIDI keyboard | ✅ (MIDI Keyboard window) | ✅ keys sound the armed instruments and step-enter notes |
@@ -72,6 +72,7 @@ Legend: ✅ works · 🟡 partial · ❌ missing.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | MIDI output ports for MIDI tracks and Thru |
 | 2026-10-15 | minor | MIDI input devices: live play of armed instruments, recording to MIDI clips, input filter; virtual keyboard sounds instruments |
 | 2026-10-15 | minor | Record to disk corrected from "into RAM" to partial (streams to WAV); percentages not revised |
 | 2026-10-13 | trivial | bounces of a bus fed by an aux compensate its latency (#246) |
