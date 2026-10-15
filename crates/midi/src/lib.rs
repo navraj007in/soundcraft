@@ -5,10 +5,12 @@
 //! - [`read_smf`] / [`write_smf`]: Standard MIDI File import (format 0/1, format 2 best-effort) and
 //!   export (format 1, 960 PPQ). The reader treats its input as hostile: every length is checked,
 //!   variable-length quantities are bounded and event counts are capped.
+//! - [`Sequence::from_performance`]: the sequence a live take of raw channel messages makes.
 //! - [`ops`]: MIDI editing operations (quantize, transpose, velocity, duration, split).
 //! - [`note_name`], [`gm_drum_name`], [`gm_program_name`]: display names.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod live;
 mod names;
 pub mod ops;
 mod rng;

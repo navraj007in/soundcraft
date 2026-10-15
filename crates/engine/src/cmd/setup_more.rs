@@ -384,7 +384,7 @@ fn midi_filter(e: &mut Engine, p: &Value) -> Result<Value> {
     Ok(json!({"filtered": filtered}))
 }
 
-fn device_key(name: &str) -> String {
+pub(crate) fn device_key(name: &str) -> String {
     let n: String = name.chars().filter(|c| !c.is_control() && *c != '=').take(64).collect();
     format!("midi.input.{}", n.trim())
 }

@@ -103,7 +103,7 @@ Other languages shipped: 0. Detail: [localization-parity.md](docs/localization-p
 Ranked; the alpha gate, the alpha checklist and the beta plan are in [docs/roadmap.md](docs/roadmap.md).
 
 1. **Alpha blocker:** audio interfaces: device and buffer-size choice, duplex stream, ASIO (G-01). 35–55 h. (Recording already streams to disk.)
-2. **Alpha blocker:** MIDI devices: record from keyboards, play instruments live, output (G-02). 20–35 h.
+2. **Alpha blocker:** MIDI devices: output to external gear, thru and clock (G-02); recording from keyboards and playing instruments live are done. 10–18 h.
 3. **Alpha blocker:** AAF/OMF import and export (G-03). 50–90 h.
 4. macOS plugin entitlement (#153), then AU editors (G-05). 1 h for the entitlement (needed for the mix row), then 15–25 h.
 5. Land the open bug-fix PRs and clear the correctness backlog (G-04). 15–25 h.

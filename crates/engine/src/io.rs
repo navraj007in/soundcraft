@@ -1424,6 +1424,82 @@ pub fn add_recording(e: &mut Engine, start: Samples, takes: Vec<(TrackId, PathBu
     out
 }
 
+/// Of the system's MIDI input `ports`, the ones the session has enabled (Setup › MIDI › MIDI Input
+/// Devices).
+pub fn enabled_midi_input_ports(e: &Engine, ports: &[String]) -> Vec<String> {
+    let on: Vec<&str> = e.session().edit.flags.iter().filter_map(|f| f.strip_prefix("midi.input.")).collect();
+    ports.iter().filter(|p| on.contains(&crate::cmd::setup_more::device_key(p).trim_start_matches("midi.input."))).cloned().collect()
+}
+
+/// The key a MIDI input port's enabled flag is stored under (`midi.input.<key>`).
+pub fn midi_device_key(port: &str) -> String {
+    crate::cmd::setup_more::device_key(port).trim_start_matches("midi.input.").to_string()
+}
+
+/// Whether Setup › MIDI › MIDI Input Filter lets this channel message be recorded.
+pub fn midi_message_recordable(e: &Engine, msg: [u8; 3]) -> bool {
+    let kind = match msg[0] & 0xF0 {
+        0x80 | 0x90 => "notes",
+        0xA0 => "poly_aftertouch",
+        0xB0 => "cc",
+        0xC0 => "program",
+        0xD0 => "mono_aftertouch",
+        0xE0 => "pitch_bend",
+        _ => return false,
+    };
+    !e.session().edit.flag(&format!("midi.filter.{kind}"))
+}
+
+/// The MIDI and instrument tracks that are record-enabled: they take what a keyboard played.
+pub fn armed_midi_tracks(e: &Engine) -> Vec<TrackId> {
+    e.session()
+        .tracks
+        .iter()
+        .filter(|t| t.mixer.record_arm && !t.inactive && matches!(t.kind, TrackKind::Instrument | TrackKind::Midi))
+        .map(|t| t.id)
+        .collect()
+}
+
+/// Turn what a keyboard played between `start` and `end` into one MIDI clip on each of `tracks`
+/// (`events` are the raw channel messages with the timeline sample they arrived at). A take with
+/// no notes or controllers makes no clip. Returns the new clips. The clip runs from `start` to
+/// `end`, or to the last event if that is later. With `undo` the edit is one undo step labelled
+/// "Record MIDI"; without it the caller records the step (as when audio takes were added too).
+pub fn add_midi_recording(
+    e: &mut Engine,
+    start: Samples,
+    end: Samples,
+    events: &[(Samples, [u8; 3])],
+    tracks: &[TrackId],
+    undo: bool,
+) -> Vec<soundcraft_model::ClipId> {
+    let before = e.session_arc();
+    let allowed: Vec<(Samples, [u8; 3])> = events.iter().filter(|(_, m)| midi_message_recordable(e, *m)).copied().collect();
+    let events = allowed.as_slice();
+    let s = e.session_mut();
+    let (rate, base) = (s.sample_rate, s.tempo.samples_to_ticks(start, s.sample_rate));
+    let ticked: Vec<(i64, [u8; 3])> =
+        events.iter().filter(|(at, _)| *at >= start).map(|(at, m)| (s.tempo.samples_to_ticks(*at, rate).saturating_sub(base), *m)).collect();
+    let last = events.iter().map(|(at, _)| *at).filter(|at| *at >= start).max().unwrap_or(start);
+    let end = end.max(last).max(start.saturating_add(1));
+    let seq = soundcraft_midi::Sequence::from_performance(&ticked, s.tempo.samples_to_ticks(end, rate).saturating_sub(base));
+    let mut out = Vec::new();
+    if seq.notes.is_empty() && seq.ctrls.is_empty() {
+        return out;
+    }
+    for &t in tracks {
+        let Some(tr) = s.track(t) else { continue };
+        let name = tr.name.clone();
+        let cid = s.new_clip_id();
+        crate::edit::place_clip(s, t, Clip::midi(cid, name, start, end - start, seq.clone()));
+        out.push(cid);
+    }
+    if undo && !out.is_empty() {
+        e.push_undo("Record MIDI", before);
+    }
+    out
+}
+
 /// Where a take recording from `start` shows while it holds `len` samples, as it will be placed:
 /// just the pass under way when loop recording in passes of `pass`, within the `punch` range.
 /// Returns the timeline position of its first sample and the span it covers.
@@ -1431,6 +1507,84 @@ pub fn live_span(start: Samples, pass: Option<Samples>, punch: Option<Range>, le
     let origin = start.saturating_sub(pass.filter(|p| *p > 0).map_or(0, |p| len / p * p));
     let span = Range::new(start, origin.saturating_add(len));
     Some((origin, span.intersect(&punch.unwrap_or(span))?))
+}
+
+#[cfg(test)]
+mod midi_record_tests {
+    use super::*;
+
+    fn session_with_keys() -> (Engine, TrackId, TrackId) {
+        let mut e = Engine::default();
+        let keys = e.session_mut().add_track(TrackKind::Instrument, ChannelFormat::Stereo, Some("Keys"));
+        let idle = e.session_mut().add_track(TrackKind::Instrument, ChannelFormat::Stereo, Some("Pad"));
+        e.session_mut().track_mut(keys).unwrap().mixer.record_arm = true;
+        (e, keys, idle)
+    }
+
+    #[test]
+    fn a_take_becomes_a_clip_on_each_armed_midi_track_in_one_undo_step() {
+        let (mut e, keys, idle) = session_with_keys();
+        assert_eq!(armed_midi_tracks(&e), vec![keys]);
+        let sr = e.session().sample_rate.hz() as i64;
+        // Recording started at 2 s (bar 2 at 120 bpm): a note held for half a second.
+        let events = [(2 * sr, [0x90, 60, 100]), (2 * sr + sr / 2, [0x80, 60, 0]), (3 * sr, [0xB0, 64, 127])];
+        let undo = e.undo_history().len();
+        let clips = add_midi_recording(&mut e, 2 * sr, 4 * sr, &events, &[keys], true);
+        assert_eq!(clips.len(), 1);
+        let (_, clip) = e.session().find_clip(clips[0]).unwrap();
+        assert_eq!((clip.start, clip.length), (2 * sr, 2 * sr));
+        let ClipContent::Midi { sequence } = &clip.content else { panic!("not a MIDI clip") };
+        // Ticks are relative to the clip: 120 bpm is 960 ticks per half second.
+        assert_eq!(sequence.notes.len(), 1);
+        assert_eq!((sequence.notes[0].pitch, sequence.notes[0].start, sequence.notes[0].length), (60, 0, 960));
+        assert_eq!(sequence.ctrls.len(), 1);
+        assert_eq!(sequence.ctrls[0].tick, 1920);
+        assert!(e.session().track(idle).unwrap().clips().is_empty(), "an unarmed track gets nothing");
+        assert_eq!(e.undo_history().len(), undo + 1);
+        assert_eq!(e.undo_label(), Some("Record MIDI"));
+        e.undo();
+        assert!(e.session().track(keys).unwrap().clips().is_empty());
+    }
+
+    #[test]
+    fn the_input_filter_keeps_filtered_kinds_out_of_the_take() {
+        let (mut e, keys, _) = session_with_keys();
+        e.execute("setup.midi_input_filter", &serde_json::json!({"filter": ["cc"]})).unwrap();
+        let clips = add_midi_recording(&mut e, 0, 48_000, &[(100, [0x90, 60, 100]), (200, [0xB0, 64, 127]), (300, [0x80, 60, 0])], &[keys], true);
+        let (_, clip) = e.session().find_clip(clips[0]).unwrap();
+        let ClipContent::Midi { sequence } = &clip.content else { panic!("not a MIDI clip") };
+        assert_eq!((sequence.notes.len(), sequence.ctrls.len()), (1, 0));
+    }
+
+    #[test]
+    fn enabled_ports_follow_the_sessions_device_list() {
+        let (mut e, _, _) = session_with_keys();
+        let ports = vec!["IAC Driver Bus 1".to_string(), "Arturia KeyStep".to_string()];
+        assert!(enabled_midi_input_ports(&e, &ports).is_empty());
+        e.execute("setup.midi_input_devices", &serde_json::json!({"enable": ["Arturia KeyStep"]})).unwrap();
+        assert_eq!(enabled_midi_input_ports(&e, &ports), vec!["Arturia KeyStep".to_string()]);
+        e.execute("setup.midi_input_devices", &serde_json::json!({"disable": ["Arturia KeyStep"]})).unwrap();
+        assert!(enabled_midi_input_ports(&e, &ports).is_empty());
+    }
+
+    #[test]
+    fn nothing_played_makes_no_clip_and_no_undo_step() {
+        let (mut e, keys, _) = session_with_keys();
+        let undo = e.undo_history().len();
+        assert!(add_midi_recording(&mut e, 0, 48_000, &[], &[keys], true).is_empty());
+        // Messages from before the take began are ignored.
+        assert!(add_midi_recording(&mut e, 10_000, 48_000, &[(5_000, [0x90, 60, 100])], &[keys], true).is_empty());
+        assert_eq!(e.undo_history().len(), undo);
+    }
+
+    #[test]
+    fn a_note_still_held_when_recording_stops_ends_with_the_clip() {
+        let (mut e, keys, _) = session_with_keys();
+        let clips = add_midi_recording(&mut e, 0, 48_000, &[(24_000, [0x90, 72, 90])], &[keys], true);
+        let (_, clip) = e.session().find_clip(clips[0]).unwrap();
+        let ClipContent::Midi { sequence } = &clip.content else { panic!("not a MIDI clip") };
+        assert_eq!((sequence.notes[0].start, sequence.notes[0].length), (960, 960));
+    }
 }
 
 #[cfg(test)]

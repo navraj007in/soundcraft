@@ -23,6 +23,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod devices;
+pub mod midi_io;
 pub mod record;
 
 pub use devices::AudioConfig;
@@ -72,6 +73,8 @@ enum Cmd {
     },
     Stop,
     Locate(Samples),
+    /// Where MIDI device messages arrive.
+    Midi(Arc<midi_io::MidiShared>),
     /// The document was replaced: drop every plugin instance (they belong to the old one).
     ResetSession,
 }
@@ -173,6 +176,8 @@ struct AudioState {
     /// Retired plugin instances go back to the UI thread to be dropped there.
     garbage: Sender<Vec<Box<dyn Plugin>>>,
     old_sessions: Option<SyncSender<Arc<Session>>>,
+    /// MIDI device messages (see [`midi_io`]).
+    midi: Option<Arc<midi_io::MidiShared>>,
 }
 
 fn new_engine(sr: f32) -> MixEngine {
@@ -189,6 +194,7 @@ impl AudioState {
         AudioState {
             garbage,
             old_sessions: None,
+            midi: None,
             fold: fold_gains(&session),
             rx,
             shared,
@@ -255,6 +261,7 @@ impl AudioState {
                     self.read = 0.0;
                     self.mix.reset();
                 }
+                Cmd::Midi(m) => self.midi = Some(m),
                 Cmd::ResetSession => {
                     let sr = self.session.sample_rate.as_f64() as f32;
                     let mut old = std::mem::replace(&mut self.mix, new_engine(sr));
@@ -318,7 +325,15 @@ impl AudioState {
         }
         self.mix.monitor_only = !self.playing;
         self.mix.recording = self.recording;
+        // Keyboard messages since the last block play the armed instruments; while recording they
+        // also go to the UI, stamped with where on the timeline they arrived.
+        self.mix.live_midi.clear();
+        if let Some(m) = &self.midi {
+            let at = (self.playing && self.recording).then_some(self.pos);
+            m.drain_into(&mut self.mix.live_midi, soundcraft_mix::LIVE_MIDI_CAPACITY, at);
+        }
         self.mix.render(&self.session, self.pos, n, &mut self.pending);
+        self.mix.live_midi.clear();
         self.send_garbage();
         self.pending_len = n;
         if let Ok(mut m) = self.shared.meters.try_lock() {
@@ -342,7 +357,15 @@ impl AudioState {
     fn fill(&mut self, out: &mut [f32], channels: usize) {
         self.drain();
         let channels = channels.max(1);
-        let monitoring = self.input.is_some() && self.session.tracks.iter().any(|t| t.mixer.input_monitor || t.mixer.record_arm);
+        let armed = |t: &soundcraft_model::Track| t.mixer.input_monitor || t.mixer.record_arm;
+        // Audio inputs are monitored through armed tracks; a keyboard plays armed instrument tracks.
+        let monitoring = (self.input.is_some() && self.session.tracks.iter().any(armed))
+            || (self.midi.is_some()
+                && self
+                    .session
+                    .tracks
+                    .iter()
+                    .any(|t| armed(t) && matches!(t.kind, soundcraft_model::TrackKind::Instrument | soundcraft_model::TrackKind::Midi)));
         if !self.playing && !monitoring {
             out.iter_mut().for_each(|x| *x = 0.0);
             if let Ok(mut m) = self.shared.meters.try_lock() {
@@ -419,11 +442,28 @@ struct Side {
     refused: HashSet<(TrackId, usize)>,
     garbage: Receiver<Vec<Box<dyn Plugin>>>,
     old_sessions: Option<Receiver<Arc<Session>>>,
+    /// The open MIDI input devices and what they share with the audio callback.
+    midi: Option<(midi_io::MidiInputs, Arc<midi_io::MidiShared>)>,
 }
 
 impl Side {
     fn new(rate: f32, garbage: Receiver<Vec<Box<dyn Plugin>>>) -> Side {
-        Side { shadow: HashMap::new(), rate, editors: HashMap::new(), states: BTreeMap::new(), refused: HashSet::new(), garbage, old_sessions: None }
+        Side {
+            shadow: HashMap::new(),
+            rate,
+            editors: HashMap::new(),
+            states: BTreeMap::new(),
+            refused: HashSet::new(),
+            garbage,
+            old_sessions: None,
+            midi: None,
+        }
+    }
+
+    fn attach_midi(&mut self, tx: &Sender<Cmd>) {
+        let shared = midi_io::MidiShared::new();
+        let _ = tx.send(Cmd::Midi(Arc::clone(&shared)));
+        self.midi = Some((midi_io::MidiInputs::new(Arc::clone(&shared)), shared));
     }
 
     /// Drops retired instances (closing their editors first, inside the plugin's drop) and
@@ -508,6 +548,7 @@ impl Player {
         soundcraft_mix::prepare_realtime();
         let p = Player::open(Arc::clone(&session), cfg);
         p.side().return_old_sessions(&p.tx);
+        p.side().attach_midi(&p.tx);
         // Hand the initial session's third-party plugins over.
         p.update_session(session);
         p
@@ -688,6 +729,36 @@ impl Player {
             device_buffer: None,
             silent: true,
         }
+    }
+
+    /// Open exactly the MIDI input ports called `names`; returns what could not be opened.
+    pub fn set_midi_inputs(&self, names: &[String]) -> Vec<String> {
+        self.side().midi.as_mut().map_or_else(Vec::new, |(inputs, _)| inputs.set_enabled(names))
+    }
+
+    /// The MIDI input ports currently open.
+    pub fn open_midi_inputs(&self) -> Vec<String> {
+        self.side().midi.as_ref().map_or_else(Vec::new, |(inputs, _)| inputs.open_names())
+    }
+
+    /// Play a channel message as if a keyboard had sent it (the on-screen keyboard): it sounds the
+    /// armed instruments and is recorded like any other.
+    pub fn send_midi(&self, msg: [u8; 3]) {
+        if let Some((_, shared)) = &self.side().midi {
+            shared.push_input(msg);
+        }
+    }
+
+    /// MIDI messages played while recording since the last call, with their timeline positions.
+    pub fn take_recorded_midi(&self, out: &mut Vec<(Samples, [u8; 3])>) {
+        if let Some((_, shared)) = &self.side().midi {
+            shared.take_recorded(out);
+        }
+    }
+
+    /// MIDI messages lost to a full buffer since the last call.
+    pub fn take_dropped_midi(&self) -> u32 {
+        self.side().midi.as_ref().map_or(0, |(_, shared)| shared.take_dropped())
     }
 
     /// The document was replaced (new, open, revert): no plugin instance carries over. Call before
@@ -1155,6 +1226,84 @@ mod tests {
         fn save_state(&mut self) -> Option<Vec<u8>> {
             Some(self.1.to_vec())
         }
+    }
+
+    /// An instrument that counts the notes it is sent.
+    struct NoteCounter(Box<dyn Plugin>, Arc<std::sync::atomic::AtomicUsize>);
+
+    impl Plugin for NoteCounter {
+        fn info(&self) -> &'static soundcraft_dsp::PluginInfo {
+            self.0.info()
+        }
+        fn prepare(&mut self, sr: f32, mb: usize, ch: usize) {
+            self.0.prepare(sr, mb, ch);
+        }
+        fn reset(&mut self) {
+            self.0.reset();
+        }
+        fn set_param(&mut self, id: &str, v: f32) -> bool {
+            self.0.set_param(id, v)
+        }
+        fn param(&self, id: &str) -> Option<f32> {
+            self.0.param(id)
+        }
+        fn process(&mut self, io: &mut [Vec<f32>], frames: usize) {
+            self.0.process(io, frames);
+        }
+        fn midi(&mut self, _offset: usize, msg: [u8; 3]) {
+            if msg[0] & 0xF0 == 0x90 {
+                self.1.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    #[test]
+    fn a_keyboard_plays_the_armed_instrument_and_is_recorded_with_its_timeline_position() {
+        use soundcraft_model::{ChannelFormat, Insert, TrackKind};
+        let mut s = soundcraft_model::Session::default();
+        let t = s.add_track(TrackKind::Instrument, ChannelFormat::Stereo, None);
+        let tr = s.track_mut(t).unwrap();
+        tr.instrument = Some(Insert::new("clap:test.keys"));
+        tr.mixer.record_arm = true;
+        let shared = Arc::new(Shared {
+            position: AtomicI64::new(0),
+            playing: AtomicBool::new(false),
+            speed: AtomicU32::new(1000),
+            meters: Mutex::new(MeterSnapshot::default()),
+        });
+        let (tx, rx) = channel();
+        let (gtx, _grx) = channel();
+        let mut st = AudioState::new(rx, shared, Arc::new(soundcraft_model::Session::default()), 48_000.0, gtx);
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut plugin = NoteCounter(soundcraft_dsp::create("gain").unwrap(), Arc::clone(&count));
+        plugin.prepare(48_000.0, 512, 2);
+        tx.send(Cmd::Session(
+            Arc::new(s),
+            vec![PreparedInstance { track: t, slot: soundcraft_mix::INSTRUMENT_SLOT, id: "clap:test.keys".into(), ch: 2, plugin: Box::new(plugin) }],
+        ))
+        .unwrap();
+        let midi = midi_io::MidiShared::new();
+        tx.send(Cmd::Midi(Arc::clone(&midi))).unwrap();
+        let mut out = vec![0.0f32; 1024];
+        st.fill(&mut out, 2);
+        // Stopped: the keyboard plays the armed instrument, and nothing is recorded.
+        midi.push_input([0x90, 60, 100]);
+        st.fill(&mut out, 2);
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+        let mut rec = Vec::new();
+        midi.take_recorded(&mut rec);
+        assert!(rec.is_empty(), "not recording");
+        // Recording while playing from 96 000: messages come back stamped with that position.
+        tx.send(Cmd::Recording(true)).unwrap();
+        tx.send(Cmd::Play { from: 96_000, end: None, looped: None }).unwrap();
+        midi.push_input([0x90, 64, 90]);
+        midi.push_input([0x80, 64, 0]);
+        st.fill(&mut out, 2);
+        assert_eq!(count.load(Ordering::SeqCst), 2);
+        midi.take_recorded(&mut rec);
+        assert_eq!(rec.len(), 2);
+        assert!(rec.iter().all(|(at, _)| (96_000..96_000 + 4096).contains(at)), "{rec:?}");
+        assert_eq!((rec[0].1, rec[1].1), ([0x90, 64, 90], [0x80, 64, 0]));
     }
 
     #[test]

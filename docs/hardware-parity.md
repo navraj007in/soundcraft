@@ -31,12 +31,12 @@ Legend: ✅ works · 🟡 partial · ❌ missing.
 
 | Feature | Pro Tools | SoundCraft (all platforms) |
 |---|---|---|
-| MIDI input devices (keyboards, pads) | ✅ | ❌ no MIDI device layer at all (`setup.midi_input_devices` stores names) |
+| MIDI input devices (keyboards, pads) | ✅ | 🟡 CoreMIDI/WinMM/ALSA input via midir: enabled devices (Setup › MIDI › MIDI Input Devices) play armed instrument tracks live and record onto armed MIDI and instrument tracks as MIDI clips; no device-to-track assignment or channel filter yet |
 | MIDI output to external gear | ✅ | ❌ |
-| MIDI Thru, input filter | ✅ | ❌ (stored flags only) |
+| MIDI Thru, input filter | ✅ | 🟡 input filter drops message kinds from a take; no Thru to an output port |
 | MIDI Beat Clock out, MTC generate/chase | ✅ | ❌ |
 | MIDI learn / controller mapping | ✅ (via surfaces and plug-in maps) | ❌ |
-| Virtual MIDI keyboard | ✅ (MIDI Keyboard window) | 🟡 window exists, no live audition path |
+| Virtual MIDI keyboard | ✅ (MIDI Keyboard window) | ✅ keys sound the armed instruments and step-enter notes |
 
 ## Control surfaces
 
@@ -72,6 +72,7 @@ Legend: ✅ works · 🟡 partial · ❌ missing.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | MIDI input devices: live play of armed instruments, recording to MIDI clips, input filter; virtual keyboard sounds instruments |
 | 2026-10-15 | minor | Record to disk corrected from "into RAM" to partial (streams to WAV); percentages not revised |
 | 2026-10-13 | trivial | bounces of a bus fed by an aux compensate its latency (#246) |
 | 2026-10-12 | minor | Audio device settings: system, output, input, sample rate and buffer size; opt-in ASIO |

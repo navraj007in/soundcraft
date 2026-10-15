@@ -22,6 +22,7 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
     workspace(app, ctx);
     configurations(app, ctx);
     playback_engine(app, ctx);
+    midi_devices(app, ctx);
     io_setup(app, ctx);
     shortcuts_window(app, ctx);
     clip_effects(app, ctx);
@@ -278,13 +279,20 @@ fn midi_keyboard(app: &mut SoundApp, ctx: &egui::Context) {
         let mut wi = 0;
         let base = 48u8;
         let mut clicked: Option<u8> = None;
+        // The key under a pressed pointer sounds the armed instruments, like a hardware keyboard.
+        let mut sounding: Option<u8> = None;
         let pos = resp.interact_pointer_pos();
         for p in base..base + 48 {
             if !matches!(p % 12, 1 | 3 | 6 | 8 | 10) {
                 let kr = egui::Rect::from_min_size(egui::pos2(r.min.x + wi as f32 * w, r.min.y), vec2(w - 1.0, r.height()));
                 ui.painter().rect_filled(kr, 2.0, Color32::from_rgb(235, 235, 235));
-                if resp.clicked() && pos.is_some_and(|q| kr.contains(q)) {
-                    clicked = Some(p);
+                if pos.is_some_and(|q| kr.contains(q)) {
+                    if resp.clicked() {
+                        clicked = Some(p);
+                    }
+                    if resp.is_pointer_button_down_on() {
+                        sounding = Some(p);
+                    }
                 }
                 wi += 1;
             }
@@ -294,12 +302,35 @@ fn midi_keyboard(app: &mut SoundApp, ctx: &egui::Context) {
             if matches!(p % 12, 1 | 3 | 6 | 8 | 10) {
                 let kr = egui::Rect::from_min_size(egui::pos2(r.min.x + wi as f32 * w - w * 0.3, r.min.y), vec2(w * 0.6, r.height() * 0.6));
                 ui.painter().rect_filled(kr, 2.0, Color32::from_rgb(20, 20, 20));
-                if resp.clicked() && pos.is_some_and(|q| kr.contains(q)) {
-                    clicked = Some(p);
+                if pos.is_some_and(|q| kr.contains(q)) {
+                    if resp.clicked() {
+                        clicked = Some(p);
+                    }
+                    if resp.is_pointer_button_down_on() {
+                        sounding = Some(p);
+                    }
                 }
             } else {
                 wi += 1;
             }
+        }
+        let held_id = egui::Id::new("virtual_keyboard_held");
+        let held: Option<u8> = ctx.data(|d| d.get_temp(held_id));
+        if held != sounding {
+            if let (Some(p), Some(player)) = (held, &app.player) {
+                player.send_midi([0x80, p, 0]);
+            }
+            if let (Some(p), Some(player)) = (sounding, &app.player) {
+                player.send_midi([0x90, p, 100]);
+            }
+            ctx.data_mut(|d| match sounding {
+                Some(p) => {
+                    d.insert_temp(held_id, p);
+                }
+                None => {
+                    d.remove_temp::<u8>(held_id);
+                }
+            });
         }
         if let Some(p) = clicked
             && let Some(cid) = crate::midi_editor::target_clip(app)
@@ -461,6 +492,75 @@ fn number_combo(ui: &mut egui::Ui, id: &str, value: &mut Option<u32>, options: &
 }
 
 /// Setup › Playback Engine / Hardware: choose the audio system, devices, rate and buffer size.
+/// Setup › MIDI › MIDI Input Devices: which keyboards and controllers play the armed instruments and
+/// record, and which kinds of message a take keeps.
+pub fn midi_devices(app: &mut SoundApp, ctx: &egui::Context) {
+    let mut open = app.ui.show_midi_devices;
+    if !open {
+        return;
+    }
+    let ports_id = egui::Id::new("midi_ports");
+    let mut ports = ctx.data(|d| d.get_temp::<Arc<soundcraft_playback::midi_io::PortList>>(ports_id));
+    let mut refresh = false;
+    win(ctx, &mut open, "MIDI Input Devices", vec2(420.0, 360.0), |ui| {
+        let list = ports.get_or_insert_with(|| Arc::new(soundcraft_playback::midi_io::list_ports())).clone();
+        let opened = app.player.as_ref().map(|p| p.open_midi_inputs()).unwrap_or_default();
+        if list.inputs.is_empty() {
+            ui.label("No MIDI input devices found. Plug one in, then Rescan.");
+        }
+        for name in &list.inputs {
+            let mut on = app.engine.session().edit.flag(&format!("midi.input.{}", soundcraft_engine::io::midi_device_key(name)));
+            let is_open = opened.contains(name);
+            ui.horizontal(|ui| {
+                if crate::widgets::checkbox(ui, &mut on, name).changed() {
+                    let key = if on { "enable" } else { "disable" };
+                    let _ = app.run("setup.midi_input_devices", json!({ key: [name] }));
+                }
+                if on {
+                    ui.label(egui::RichText::new(if is_open { "● open" } else { "○ not connected" }).small());
+                }
+            });
+        }
+        ui.horizontal(|ui| {
+            refresh = ui.button("Rescan").clicked();
+        });
+        ui.separator();
+        ui.label("Record these kinds of message");
+        for (kind, label) in [
+            ("notes", "Notes"),
+            ("pitch_bend", "Pitch bend"),
+            ("mono_aftertouch", "Channel aftertouch"),
+            ("poly_aftertouch", "Key aftertouch"),
+            ("program", "Program changes"),
+            ("cc", "Controllers (mod wheel, sustain…)"),
+        ] {
+            let mut keep = !app.engine.session().edit.flag(&format!("midi.filter.{kind}"));
+            if crate::widgets::checkbox(ui, &mut keep, label).changed() {
+                let _ = app.run("setup.midi_input_filter", json!({ if keep { "allow" } else { "filter" }: [kind] }));
+            }
+        }
+        ui.separator();
+        ui.label(
+            egui::RichText::new(
+                "Armed (record-enabled or input-monitored) instrument tracks play what you play; recording makes a MIDI clip on each.",
+            )
+            .small(),
+        );
+    });
+    if refresh {
+        ports = None;
+    }
+    ctx.data_mut(|d| match ports {
+        Some(p) if open => {
+            d.insert_temp(ports_id, p);
+        }
+        _ => {
+            d.remove_temp::<Arc<soundcraft_playback::midi_io::PortList>>(ports_id);
+        }
+    });
+    app.ui.show_midi_devices = open;
+}
+
 pub fn playback_engine(app: &mut SoundApp, ctx: &egui::Context) {
     let mut open = app.ui.show_playback_engine;
     if !open {

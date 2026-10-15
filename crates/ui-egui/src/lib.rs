@@ -99,6 +99,8 @@ pub struct UiState {
     pub show_workspace: bool,
     pub show_configurations: bool,
     pub show_playback_engine: bool,
+    /// Setup › MIDI › MIDI Input Devices.
+    pub show_midi_devices: bool,
     /// The audio device choice (Setup › Playback Engine), kept with the preferences: per machine.
     pub audio: soundcraft_playback::AudioConfig,
     /// The Mix window lives in its own native window (Window › Mix in Separate Window); the main
@@ -166,6 +168,7 @@ impl Default for UiState {
             show_workspace: false,
             show_configurations: false,
             show_playback_engine: false,
+            show_midi_devices: false,
             audio: soundcraft_playback::AudioConfig::default(),
             mix_separate: false,
             show_io_setup: false,
@@ -261,6 +264,11 @@ pub struct SoundApp {
     /// Punch range to trim the take to (pre/post-roll recordings).
     punch: Option<Range>,
     recorder_failed: bool,
+    /// What a keyboard played since recording began (timeline sample, channel message).
+    midi_take: Vec<(Samples, [u8; 3])>,
+    /// The enabled MIDI input devices the player was last told to open, and when it last looked.
+    midi_flags: Option<Vec<String>>,
+    midi_checked: Option<std::time::Instant>,
     /// Input this take lost to a slow disk, as last reported (ms).
     lost_shown: u64,
     /// Where the takes being recorded go, autosaved with the session so a crash can't lose them.
@@ -356,6 +364,9 @@ impl SoundApp {
             record_start: 0,
             punch: None,
             recorder_failed: false,
+            midi_take: Vec::new(),
+            midi_flags: None,
+            midi_checked: None,
             lost_shown: 0,
             take_plan: None,
             ui: UiState::default(),
@@ -537,14 +548,27 @@ impl SoundApp {
             self.record_hint = Some((self.last_frame.unwrap_or_default(), why));
             return;
         }
-        self.ensure_input();
-        let takes = match self.arm_recorder() {
-            Ok(takes) => takes,
-            Err(err) => {
-                self.ui.status = format!("Cannot record: {err}");
-                return;
+        // Audio tracks record through the input device; MIDI and instrument tracks record what a
+        // keyboard plays, which needs no audio input.
+        let audio_armed =
+            self.engine.session().tracks.iter().any(|t| t.mixer.record_arm && !t.inactive && t.kind == soundcraft_model::TrackKind::Audio);
+        let takes = if audio_armed || soundcraft_engine::io::armed_midi_tracks(&self.engine).is_empty() {
+            self.ensure_input();
+            match self.arm_recorder() {
+                Ok(takes) => takes,
+                Err(err) => {
+                    self.ui.status = format!("Cannot record: {err}");
+                    return;
+                }
             }
+        } else {
+            Vec::new()
         };
+        self.midi_take.clear();
+        if let Some(p) = &self.player {
+            // Anything played before Record is not part of the take.
+            p.take_recorded_midi(&mut Vec::new());
+        }
         self.lost_shown = 0;
         if let Some(p) = &self.player {
             p.set_recording(true);
@@ -791,6 +815,7 @@ impl SoundApp {
         self.recorder_failed = false;
         let player = soundcraft_playback::Player::with_config(self.engine.session_arc(), &self.ui.audio);
         player.locate(at);
+        self.midi_flags = None;
         self.player = Some(player);
         Ok(())
     }
@@ -884,7 +909,45 @@ impl SoundApp {
         }
         self.recorder = None;
         self.recorder_failed = false;
+        self.midi_flags = None;
         self.player = Some(Player::with_config(self.engine.session_arc(), &self.ui.audio));
+    }
+
+    /// Keep the open MIDI input ports in line with the session's enabled list (Setup › MIDI › MIDI
+    /// Input Devices), and look again every few seconds so a keyboard plugged in later is picked up.
+    fn sync_midi_inputs(&mut self) {
+        let Some(p) = &self.player else { return };
+        let mut flags: Vec<String> = self.engine.session().edit.flags.iter().filter(|f| f.starts_with("midi.input.")).cloned().collect();
+        flags.sort();
+        let due = self.midi_checked.is_none_or(|t| t.elapsed().as_secs() >= 3);
+        if self.midi_flags.as_ref() == Some(&flags) && !due {
+            return;
+        }
+        self.midi_checked = Some(std::time::Instant::now());
+        let open = p.open_midi_inputs();
+        if flags.is_empty() && open.is_empty() {
+            self.midi_flags = Some(flags);
+            return;
+        }
+        let ports = soundcraft_playback::midi_io::list_ports().inputs;
+        let wanted = soundcraft_engine::io::enabled_midi_input_ports(&self.engine, &ports);
+        if wanted != open {
+            let problems = p.set_midi_inputs(&wanted);
+            if let Some(first) = problems.first() {
+                self.ui.status = format!("MIDI input: {first}");
+            }
+        }
+        self.midi_flags = Some(flags);
+    }
+
+    /// While recording, keep what the keyboard plays (the audio thread stamps it with the timeline).
+    fn collect_midi_take(&mut self) {
+        if !self.engine.transport.recording {
+            return;
+        }
+        if let Some(p) = &self.player {
+            p.take_recorded_midi(&mut self.midi_take);
+        }
     }
 
     fn finish_recording(&mut self) {
@@ -893,8 +956,10 @@ impl SoundApp {
             p.set_recording(false);
         }
         let plan = self.take_plan.take();
-        let Some(r) = &mut self.recorder else { return };
-        let (takes, problem) = r.finish();
+        let (takes, problem) = match &mut self.recorder {
+            Some(r) => r.finish(),
+            None => (Vec::new(), None),
+        };
         let tracks = takes.len().max(1);
         let plan = plan.unwrap_or_else(|| soundcraft_engine::io::Recording {
             start: self.record_start,
@@ -906,8 +971,20 @@ impl SoundApp {
         self.punch = None;
         self.autosaved_rev = 0;
         let ids = soundcraft_engine::io::place_recording(&mut self.engine, &plan, takes);
+        // What a keyboard played goes onto the armed MIDI and instrument tracks: one clip each.
+        if let Some(p) = &self.player {
+            p.take_recorded_midi(&mut self.midi_take);
+        }
+        let events = std::mem::take(&mut self.midi_take);
+        let midi_tracks = soundcraft_engine::io::armed_midi_tracks(&self.engine);
+        let end = self.position();
+        let midi_clips = soundcraft_engine::io::add_midi_recording(&mut self.engine, plan.start, end, &events, &midi_tracks, ids.is_empty()).len();
         self.ui.status =
             if plan.pass.is_some() { format!("Loop-recorded {} take(s)", ids.len() / tracks) } else { format!("Recorded {} clip(s)", ids.len()) };
+        if midi_clips > 0 {
+            self.ui.status =
+                if ids.is_empty() { format!("Recorded {midi_clips} MIDI clip(s)") } else { format!("{}, {midi_clips} MIDI", self.ui.status) };
+        }
         if let Some(p) = problem {
             log::warn!("recording: {p}");
             self.ui.status = format!("{} ({p})", self.ui.status);
@@ -1149,6 +1226,8 @@ impl SoundApp {
         }
         self.watch_output();
         self.watch_input();
+        self.sync_midi_inputs();
+        self.collect_midi_take();
         // Stop the old playback before sending a replacement session to the audio thread.
         self.handle_transport(dt);
         if self.engine.revision != self.last_rev {

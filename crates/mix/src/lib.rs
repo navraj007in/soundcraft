@@ -378,6 +378,10 @@ pub struct MixEngine {
     pub monitor_only: bool,
     /// Recording: record-armed tracks hear their input (auto input).
     pub recording: bool,
+    /// MIDI messages that arrived from devices since the last block (status, data 1, data 2),
+    /// set by the audio host before each `render`. They play the instruments of record-armed or
+    /// input-monitored tracks; the host clears them afterwards.
+    pub live_midi: Vec<[u8; 3]>,
     /// Mix the metronome (Options > Click) into the output. Playback turns this on; offline renders
     /// (bounces, stems, exports) leave it off so the click is never printed into a file.
     pub metronome: bool,
@@ -463,6 +467,7 @@ impl MixEngine {
             input: Vec::new(),
             monitor_only: false,
             recording: false,
+            live_midi: Vec::with_capacity(LIVE_MIDI_CAPACITY),
             metronome: false,
             external: false,
             adopt: HashMap::new(),
@@ -704,7 +709,7 @@ impl MixEngine {
             }
         }
         let busses = std::mem::take(&mut self.busses);
-        let live_in = LiveInput { input: &self.input, monitor_only: self.monitor_only, recording: self.recording };
+        let live_in = LiveInput { input: &self.input, monitor_only: self.monitor_only, recording: self.recording, midi: &self.live_midi };
         // Offline renders always parallelise; the audio callback follows the realtime policy.
         let parallel = !on_audio_thread() || self.parallel.use_parallel(realtime_parallel());
         run_strips(&mut work, parallel, |(i, st)| {
@@ -764,7 +769,7 @@ impl MixEngine {
             if st.scratch.len() < self.max_block {
                 st.scratch.resize(self.max_block, 0.0);
             }
-            let live_in = LiveInput { input: &self.input, monitor_only: self.monitor_only, recording: self.recording };
+            let live_in = LiveInput { input: &self.input, monitor_only: self.monitor_only, recording: self.recording, midi: &self.live_midi };
             process_strip(s, t, &mut st, &self.busses, &live_in, pos, frames, any_solo, &implicit_solo);
             let ch = st.buf.len();
             st.align.set(0, ch);
@@ -1007,7 +1012,11 @@ struct LiveInput<'a> {
     input: &'a [Vec<f32>],
     monitor_only: bool,
     recording: bool,
+    midi: &'a [[u8; 3]],
 }
+
+/// Most live MIDI messages one block takes from the host (further ones are dropped).
+pub const LIVE_MIDI_CAPACITY: usize = 1024;
 
 fn process_strip(
     s: &Session,
@@ -1043,7 +1052,8 @@ fn process_strip(
             }
         }
         TrackKind::Audio if live.monitor_only => {}
-        TrackKind::Instrument | TrackKind::Midi if live.monitor_only => {}
+        // Stopped: only an instrument you can play live (armed or input-monitored) keeps sounding.
+        TrackKind::Instrument | TrackKind::Midi if live.monitor_only && !(t.mixer.record_arm || t.mixer.input_monitor) => {}
         TrackKind::Audio => {
             let block = Range { start: pos, end: pos.saturating_add(frames as i64) };
             for clip in t.clips() {
@@ -1108,7 +1118,16 @@ fn process_strip(
                 if std::mem::take(&mut strip.chase) {
                     chase_controllers(s, t, pos, inst);
                 }
-                schedule_notes(s, t, pos, frames, inst, &mut strip.held);
+                // A stopped transport plays no clips (its position does not advance, so the same
+                // notes would retrigger every block); live input still plays.
+                if !live.monitor_only {
+                    schedule_notes(s, t, pos, frames, inst, &mut strip.held);
+                }
+                if t.mixer.record_arm || t.mixer.input_monitor {
+                    for msg in live.midi {
+                        inst.plugin.midi(0, *msg);
+                    }
+                }
                 if strip.buf.len() >= 2 {
                     inst.plugin.process(&mut strip.buf, frames);
                 } else if let Some(c0) = strip.buf.first_mut() {
@@ -2968,6 +2987,76 @@ mod tests {
             m.render(&s, i * 512, 512, &mut out);
         }
         (on.load(Ordering::SeqCst), off.load(Ordering::SeqCst))
+    }
+
+    /// Counts the raw MIDI messages an instrument receives.
+    struct MidiCounter(Box<dyn Plugin>, Arc<std::sync::atomic::AtomicUsize>);
+    impl Plugin for MidiCounter {
+        fn info(&self) -> &'static soundcraft_dsp::PluginInfo {
+            self.0.info()
+        }
+        fn prepare(&mut self, sr: f32, mb: usize, ch: usize) {
+            self.0.prepare(sr, mb, ch);
+        }
+        fn reset(&mut self) {
+            self.0.reset();
+        }
+        fn set_param(&mut self, id: &str, v: f32) -> bool {
+            self.0.set_param(id, v)
+        }
+        fn param(&self, id: &str) -> Option<f32> {
+            self.0.param(id)
+        }
+        fn process(&mut self, io: &mut [Vec<f32>], n: usize) {
+            self.0.process(io, n);
+        }
+        fn midi(&mut self, _offset: usize, msg: [u8; 3]) {
+            // Notes only: the engine's own controller chase is not what is being counted.
+            if matches!(msg[0] & 0xF0, 0x80 | 0x90) {
+                self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+    }
+
+    #[test]
+    fn live_midi_plays_the_instruments_of_armed_or_monitored_tracks_only() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let mut s = Session::default();
+        let (armed, monitored, idle) = (
+            s.add_track(TrackKind::Instrument, ChannelFormat::Stereo, None),
+            s.add_track(TrackKind::Instrument, ChannelFormat::Stereo, None),
+            s.add_track(TrackKind::Instrument, ChannelFormat::Stereo, None),
+        );
+        for t in [armed, monitored, idle] {
+            s.track_mut(t).unwrap().instrument = Some(Insert::new("clap:test.midi"));
+        }
+        s.track_mut(armed).unwrap().mixer.record_arm = true;
+        s.track_mut(monitored).unwrap().mixer.input_monitor = true;
+        let counts: Vec<Arc<AtomicUsize>> = (0..3).map(|_| Arc::new(AtomicUsize::new(0))).collect();
+        let mut m = MixEngine::new(48000., 512);
+        m.set_external_instances(true);
+        m.adopt(
+            [armed, monitored, idle]
+                .iter()
+                .zip(&counts)
+                .map(|(t, c)| {
+                    let mut p = MidiCounter(soundcraft_dsp::create("gain").unwrap(), Arc::clone(c));
+                    p.prepare(48000., 512, 2);
+                    PreparedInstance { track: *t, slot: INSTRUMENT_SLOT, id: "clap:test.midi".into(), ch: 2, plugin: Box::new(p) }
+                })
+                .collect(),
+        );
+        let mut out = vec![vec![0.; 512]; 2];
+        // Stopped (monitor-only), as when playing a keyboard with the transport idle.
+        m.monitor_only = true;
+        m.live_midi.extend([[0x90, 60, 100], [0x80, 60, 0]]);
+        m.render(&s, 0, 512, &mut out);
+        m.live_midi.clear();
+        let got: Vec<usize> = counts.iter().map(|c| c.load(Ordering::SeqCst)).collect();
+        assert_eq!(got, vec![2, 2, 0], "armed and monitored tracks hear the keyboard; an idle one does not");
+        // Nothing left over: the next block without new messages sends nothing.
+        m.render(&s, 0, 512, &mut out);
+        assert_eq!(counts.iter().map(|c| c.load(Ordering::SeqCst)).collect::<Vec<_>>(), vec![2, 2, 0]);
     }
 
     #[test]
