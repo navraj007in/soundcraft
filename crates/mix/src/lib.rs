@@ -1437,42 +1437,84 @@ fn strip_format(t: &Track, n: usize) -> ChannelFormat {
     if t.format.channels().min(MAX_CHANNELS) == n { t.format } else { ChannelFormat::for_channels(n) }
 }
 
-/// Audio/instrument tracks first, then auxes ordered so bus producers come before consumers.
-fn processing_order(s: &Session) -> Vec<usize> {
-    let mut order: Vec<usize> =
-        (0..s.tracks.len()).filter(|&i| s.tracks.get(i).is_some_and(|t| !matches!(t.kind, TrackKind::Aux | TrackKind::Folder))).collect();
-    let mut auxes: Vec<usize> =
-        (0..s.tracks.len()).filter(|&i| s.tracks.get(i).is_some_and(|t| matches!(t.kind, TrackKind::Aux | TrackKind::Folder))).collect();
-    // Depth = how many aux hops feed this aux's input bus (bounded; cycles cap out).
-    let depth = |i: usize| -> usize {
-        let mut d = 0;
-        let mut cur = vec![i];
-        for _ in 0..8 {
-            let inputs: Vec<&Route> = cur.iter().filter_map(|&k| s.tracks.get(k)).map(|t| &t.mixer.input).collect();
-            let feeders: Vec<usize> = auxes_feeding(s, &inputs);
-            if feeders.is_empty() {
-                break;
-            }
-            d += 1;
-            cur = feeders;
-        }
-        d
-    };
-    auxes.sort_by_key(|&i| depth(i));
-    order.extend(auxes);
-    order
-}
-
-fn auxes_feeding(s: &Session, inputs: &[&Route]) -> Vec<usize> {
+/// The aux and folder tracks that feed track `i`'s input bus (by their output or a send). Empty when
+/// `i`'s input is not a bus.
+fn feeders_of(s: &Session, i: usize) -> Vec<usize> {
+    let Some(Route::Bus(b)) = s.tracks.get(i).map(|t| &t.mixer.input) else { return Vec::new() };
     s.tracks
         .iter()
         .enumerate()
         .filter(|(_, t)| matches!(t.kind, TrackKind::Aux | TrackKind::Folder))
-        .filter(|(_, t)| {
-            inputs.iter().any(|r| matches!(r, Route::Bus(_)) && (&&t.mixer.output == r || t.mixer.sends.iter().flatten().any(|sn| &&sn.target == r)))
-        })
-        .map(|(i, _)| i)
+        .filter(|(_, t)| t.mixer.output == Route::Bus(*b) || t.mixer.sends.iter().flatten().any(|sn| sn.target == Route::Bus(*b)))
+        .map(|(j, _)| j)
         .collect()
+}
+
+fn is_aux_kind(t: &Track) -> bool {
+    matches!(t.kind, TrackKind::Aux | TrackKind::Folder)
+}
+
+/// Topological order of the aux tracks (Kahn's algorithm, ties by track index so the order is
+/// stable), and any auxes left over because they sit on, or downstream of, a routing loop. The
+/// leftovers are in track order too.
+fn aux_order(s: &Session) -> (Vec<usize>, Vec<usize>) {
+    let auxes: Vec<usize> = (0..s.tracks.len()).filter(|&i| s.tracks.get(i).is_some_and(is_aux_kind)).collect();
+    let mut feeders: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut pending: HashMap<usize, usize> = HashMap::new();
+    let mut fed: HashMap<usize, Vec<usize>> = HashMap::new();
+    for &i in &auxes {
+        let f = feeders_of(s, i);
+        pending.insert(i, f.len());
+        for &j in &f {
+            fed.entry(j).or_default().push(i);
+        }
+        feeders.insert(i, f);
+    }
+    let mut ready: std::collections::BinaryHeap<std::cmp::Reverse<usize>> =
+        auxes.iter().filter(|i| pending.get(i) == Some(&0)).map(|&i| std::cmp::Reverse(i)).collect();
+    let mut order = Vec::with_capacity(auxes.len());
+    while let Some(std::cmp::Reverse(i)) = ready.pop() {
+        order.push(i);
+        for &k in fed.get(&i).into_iter().flatten() {
+            if let Some(n) = pending.get_mut(&k) {
+                *n = n.saturating_sub(1);
+                if *n == 0 {
+                    ready.push(std::cmp::Reverse(k));
+                }
+            }
+        }
+    }
+    let left: Vec<usize> = auxes.into_iter().filter(|i| !order.contains(i)).collect();
+    (order, left)
+}
+
+/// A routing loop, if the session has one: the tracks that feed each other through busses, in
+/// feeding order. A loop has no valid processing order, so commands refuse to create one and the
+/// mix cuts it (see [`processing_order`]).
+pub fn routing_cycle(s: &Session) -> Option<Vec<TrackId>> {
+    let (_, left) = aux_order(s);
+    // Every leftover is fed by another leftover; walking feeders must therefore revisit one.
+    let mut cur = *left.first()?;
+    let mut seen: Vec<usize> = Vec::new();
+    loop {
+        if let Some(at) = seen.iter().position(|&x| x == cur) {
+            return Some(seen.get(at..)?.iter().filter_map(|&i| s.tracks.get(i)).map(|t| t.id).collect());
+        }
+        seen.push(cur);
+        cur = feeders_of(s, cur).into_iter().find(|f| left.contains(f))?;
+    }
+}
+
+/// Audio/instrument tracks first, then auxes so that every bus producer comes before its consumers.
+/// Auxes on a routing loop (which commands refuse to create, but a loaded file can contain) come
+/// last, in track order: each reads the bus as the other strips left it that block, so the closing
+/// edge of the loop carries no signal rather than hanging or oscillating.
+fn processing_order(s: &Session) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..s.tracks.len()).filter(|&i| s.tracks.get(i).is_some_and(|t| !is_aux_kind(t))).collect();
+    let (sorted, looped) = aux_order(s);
+    order.extend(sorted);
+    order.extend(looped);
+    order
 }
 
 /// Implicit solo: every strip the audible soloed material flows through, however many auxes deep.
@@ -2402,6 +2444,72 @@ mod tests {
         c.params.insert("lookahead".into(), 5.0);
         c.params.insert("ratio".into(), 1.0);
         c
+    }
+
+    /// `n` auxes where aux `k` reads bus `k` and writes bus `k + 1`, created in reverse so the
+    /// chain runs against track order.
+    fn aux_chain(n: usize) -> (Session, Vec<TrackId>) {
+        let mut s = Session::default();
+        let busses: Vec<_> = (0..=n).map(|k| s.add_bus(&format!("B{k}"), ChannelFormat::Stereo)).collect();
+        let auxes: Vec<_> = (0..n).map(|k| s.add_track(TrackKind::Aux, ChannelFormat::Stereo, Some(&format!("A{k}")))).collect();
+        for k in 0..n {
+            let t = s.track_mut(auxes[n - 1 - k]).unwrap();
+            t.mixer.input = Route::Bus(busses[k]);
+            t.mixer.output = Route::Bus(busses[k + 1]);
+        }
+        let chain: Vec<_> = (0..n).map(|k| auxes[n - 1 - k]).collect();
+        (s, chain)
+    }
+
+    #[test]
+    fn a_long_aux_chain_is_ordered_producers_first() {
+        let (s, chain) = aux_chain(24);
+        let order: Vec<TrackId> =
+            processing_order(&s).into_iter().filter_map(|i| s.tracks.get(i)).filter(|t| t.kind == TrackKind::Aux).map(|t| t.id).collect();
+        assert_eq!(order, chain, "deeper than the old eight-level cap, against track order");
+        assert!(routing_cycle(&s).is_none());
+    }
+
+    #[test]
+    fn routing_loops_are_found_and_the_mix_still_renders_them() {
+        let (mut s, chain) = aux_chain(3);
+        assert!(routing_cycle(&s).is_none());
+        // The last aux feeds the first one's input bus: a loop through all three.
+        let first_input = s.track(chain[0]).unwrap().mixer.input.clone();
+        s.track_mut(chain[2]).unwrap().mixer.output = first_input;
+        let cycle = routing_cycle(&s).expect("a loop");
+        assert_eq!(cycle.len(), 3);
+        assert!(chain.iter().all(|t| cycle.contains(t)));
+        // A loaded file may contain one: it renders (the loop's closing edge is cut) without hanging.
+        let mut m = MixEngine::new(48000., 512);
+        let mut out = vec![vec![0.; 512]; 2];
+        m.render(&s, 0, 512, &mut out);
+        // An aux feeding itself is the smallest loop.
+        let (mut s2, c2) = aux_chain(1);
+        let own = s2.track(c2[0]).unwrap().mixer.input.clone();
+        s2.track_mut(c2[0]).unwrap().mixer.output = own;
+        assert_eq!(routing_cycle(&s2), Some(vec![c2[0]]));
+        // Auxes downstream of a loop are not reported as part of it.
+        let (mut s3, c3) = aux_chain(3);
+        let in0 = s3.track(c3[0]).unwrap().mixer.input.clone();
+        s3.track_mut(c3[1]).unwrap().mixer.output = in0;
+        let cycle = routing_cycle(&s3).expect("a loop between the first two");
+        assert_eq!(cycle.len(), 2);
+        assert!(!cycle.contains(&c3[2]));
+    }
+
+    #[test]
+    fn two_auxes_feeding_a_third_are_both_ordered_before_it() {
+        let mut s = Session::default();
+        let b = s.add_bus("Shared", ChannelFormat::Stereo);
+        let sink = s.add_track(TrackKind::Aux, ChannelFormat::Stereo, Some("Sink"));
+        let (x, y) = (s.add_track(TrackKind::Aux, ChannelFormat::Stereo, Some("X")), s.add_track(TrackKind::Aux, ChannelFormat::Stereo, Some("Y")));
+        s.track_mut(sink).unwrap().mixer.input = Route::Bus(b);
+        s.track_mut(x).unwrap().mixer.output = Route::Bus(b);
+        s.track_mut(y).unwrap().mixer.output = Route::Bus(b);
+        let order: Vec<TrackId> = processing_order(&s).into_iter().filter_map(|i| s.tracks.get(i)).map(|t| t.id).collect();
+        let pos = |t| order.iter().position(|&o| o == t).unwrap();
+        assert!(pos(x) < pos(sink) && pos(y) < pos(sink));
     }
 
     #[test]

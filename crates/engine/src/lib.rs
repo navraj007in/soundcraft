@@ -294,6 +294,18 @@ impl Engine {
         };
         match result {
             Ok(v) => {
+                // A routing loop has no processing order. Refuse to create one (a file that already
+                // has one still opens, and unrelated edits to it still work).
+                if spec.undoable
+                    && !Arc::ptr_eq(&before, &self.doc)
+                    && let Some(cycle) = soundcraft_mix::routing_cycle(&self.doc).filter(|_| soundcraft_mix::routing_cycle(&before).is_none())
+                {
+                    let names: Vec<String> = cycle.iter().filter_map(|t| self.doc.track(*t)).map(|t| format!("`{}`", t.name)).collect();
+                    self.doc = before;
+                    self.revision = self.revision.wrapping_add(1);
+                    self.dirty = dirty;
+                    return Err(EngineError::BadParams(id.to_string(), format!("this would route {} back into itself", names.join(" → "))));
+                }
                 if spec.undoable && !Arc::ptr_eq(&before, &self.doc) {
                     self.push_undo(spec.label, before);
                 }
@@ -422,6 +434,28 @@ mod merge_tests {
         assert_eq!(e.undo_history().len(), 1);
         e.undo();
         assert_eq!(e.session().track(t).unwrap().mixer.volume_db, 0.0);
+    }
+
+    #[test]
+    fn a_command_that_would_create_a_routing_loop_is_refused_and_changes_nothing() {
+        use soundcraft_model::{ChannelFormat, TrackKind};
+        let mut e = Engine::default();
+        let s = e.session_mut();
+        let a = s.add_track(TrackKind::Aux, ChannelFormat::Stereo, Some("Reverb"));
+        let b = s.add_track(TrackKind::Aux, ChannelFormat::Stereo, Some("Delay"));
+        e.execute("track.input", &json!({"tracks": [a.0], "input": "Bus A"})).unwrap();
+        e.execute("track.output", &json!({"tracks": [a.0], "output": "Bus B"})).unwrap();
+        e.execute("track.input", &json!({"tracks": [b.0], "input": "Bus B"})).unwrap();
+        let (undo, rev_doc) = (e.undo_history().len(), e.session().clone());
+        // Delay → Bus A would close the loop Reverb → Delay → Reverb.
+        let err = e.execute("track.output", &json!({"tracks": [b.0], "output": "Bus A"})).unwrap_err();
+        assert!(err.to_string().contains("back into itself"), "{err}");
+        assert!(err.to_string().contains("Reverb") && err.to_string().contains("Delay"), "{err}");
+        assert_eq!(e.undo_history().len(), undo, "nothing was added to the history");
+        assert_eq!(e.session().to_json().unwrap(), rev_doc.to_json().unwrap(), "the document is unchanged");
+        // A loop that is already there (an opened file) does not block unrelated edits.
+        e.session_mut().track_mut(b).unwrap().mixer.output = soundcraft_model::Route::Bus(e.session().bus_by_name("Bus A").unwrap().id);
+        assert!(e.execute("mix.volume", &json!({"track": a.0, "db": -3.0})).is_ok());
     }
 
     #[test]

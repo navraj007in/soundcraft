@@ -47,7 +47,7 @@ report.
 `soundcraft_mix::MixEngine::render(session, pos, frames, out)` renders one block: clips (gain,
 fades, clip effects) → trim → inserts → pre-fader sends → fader/mute (automation, VCA, trim
 automation) → post-fader sends → pan → busses → aux inputs → master faders. Independent strips
-process in parallel; plugin delay compensation aligns every path. The same engine renders
+process in parallel; plugin delay compensation aligns every path through the whole routing graph. Auxes are ordered topologically, commands refuse to create a routing loop (a loaded file that has one still renders, with the loop's closing edge cut). The same engine renders
 bounces offline (`render_range`) and realtime playback (`soundcraft_playback::Player`, which owns
 it on the audio thread and receives new session snapshots through a channel).
 
@@ -77,6 +77,7 @@ app as an MCP server. See `control-protocol.md` and `mcp.md`.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Routing: topological aux order, loops refused by commands |
 | 2026-10-15 | minor | Recording described as streaming to disk (was "in memory until stop"); plugin state capture off the audio thread |
 | 2026-10-10 | minor | Added video, vst3-host and au-host to the layer diagram; documented device I/O limits and in-memory media |
 | 2026-10-05 | major | First architecture overview |
