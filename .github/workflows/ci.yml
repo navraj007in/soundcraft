@@ -1,0 +1,33 @@
+# The repository gate (`cargo xtask ci`: fmt, clippy, tests, assets, layers, wasm check) on every
+# pull request and push to main that touches code, so engine, DSP and mix changes are tested before
+# they merge. Device and plugin qualification (real audio hardware, third-party plugins) is separate.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths: ["crates/**", "apps/**", "xtask/**", "Cargo.toml", "Cargo.lock", "ATTRIBUTION.md", "assets/**", ".github/workflows/ci.yml"]
+  pull_request:
+    paths: ["crates/**", "apps/**", "xtask/**", "Cargo.toml", "Cargo.lock", "ATTRIBUTION.md", "assets/**", ".github/workflows/ci.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    # macOS: the Audio Unit host tests need it, and it is the primary platform.
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask ci
