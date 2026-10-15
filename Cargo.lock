@@ -3594,6 +3594,7 @@ dependencies = [
  "cpal",
  "log",
  "soundcraft-audio-io",
+ "soundcraft-clap-host",
  "soundcraft-dsp",
  "soundcraft-mix",
  "soundcraft-model",
