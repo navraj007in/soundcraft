@@ -1316,8 +1316,8 @@ fn as_audio_thread(audio: bool, f: impl FnOnce()) {
 pub enum RealtimeParallel {
     /// Always render serially on the callback thread.
     Off,
-    /// Serial until the mix nears its time budget, then the pool; back to serial (for a cool-down)
-    /// when the pool starts missing deadlines. The default.
+    /// Serial until the mix nears its time budget, then the worker pool; back to serial (for a
+    /// cool-down) when the pool starts missing deadlines. The default.
     Adaptive,
     /// Always use the pool (when there are enough strips).
     On,
@@ -1325,9 +1325,11 @@ pub enum RealtimeParallel {
 
 static REALTIME_PARALLEL: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1);
 
-/// Choose how the audio callback uses the shared worker pool. The pool is much faster on an idle
-/// machine but has no deadline: its workers are ordinary threads, and a callback waiting on one that
-/// the OS has descheduled takes as long as that takes. Offline renders always parallelise.
+/// Choose how the audio callback uses its worker pool (see [`prepare_realtime`]). The pool shares a
+/// block's strips with the callback, which works through them alongside the workers, so it never
+/// waits for a thread that has not started; it can still wait for a worker the OS descheduled
+/// part-way through a strip, which is why the default only engages it when serial rendering nears
+/// its budget. Offline renders always parallelise (through rayon).
 pub fn set_realtime_parallel(mode: RealtimeParallel) {
     let v = match mode {
         RealtimeParallel::Off => 0,
@@ -1406,16 +1408,41 @@ impl ParallelPolicy {
     }
 }
 
+/// The audio callback's worker threads (see [`prepare_realtime`]).
+#[cfg(not(target_arch = "wasm32"))]
+static RT_POOL: std::sync::OnceLock<soundcraft_rt_pool::Pool> = std::sync::OnceLock::new();
+
+/// Start the threads the audio callback shares strips with. Call once from a normal thread before
+/// playback starts: the callback never creates threads, and without this it renders serially.
+/// Idempotent. Offline renders do not use these threads.
+pub fn prepare_realtime() {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        RT_POOL.get_or_init(|| soundcraft_rt_pool::Pool::new(soundcraft_rt_pool::default_workers()));
+    }
+}
+
 /// Process strips, in parallel on native targets when `parallel` and there are enough of them.
+/// On the audio thread that means the callback's own worker pool: the callback works through the
+/// strips itself alongside the workers, so it does not wait for a thread that has not started, and
+/// it falls back to serial when the pool is not prepared or busy. Offline renders use rayon.
 #[cfg(not(target_arch = "wasm32"))]
 fn run_strips<T: Send>(work: &mut [T], parallel: bool, f: impl Fn(&mut T) + Sync + Send) {
     use rayon::prelude::*;
-    if work.len() >= 4 && parallel {
-        // The workers render on behalf of this thread: on the audio thread, they are it too.
-        let audio = on_audio_thread();
-        work.par_iter_mut().for_each(|w| as_audio_thread(audio, || f(w)));
-    } else {
+    if work.len() < 4 || !parallel {
         work.iter_mut().for_each(f);
+    } else if on_audio_thread() {
+        match RT_POOL.get().filter(|p| p.workers() > 0) {
+            Some(pool) => match pool.run(work, &|w| as_audio_thread(true, || f(w))) {
+                // Another batch is in flight (two engines on one pool): nothing ran, so do it here.
+                Err(soundcraft_rt_pool::RunError::Busy) => work.iter_mut().for_each(f),
+                // Every strip was attempted; a panicking one is skipped for this block.
+                Ok(()) | Err(soundcraft_rt_pool::RunError::Panicked) => {}
+            },
+            None => work.iter_mut().for_each(f),
+        }
+    } else {
+        work.par_iter_mut().for_each(|w| as_audio_thread(false, || f(w)));
     }
 }
 
@@ -2357,6 +2384,51 @@ mod audio_thread_tests {
         })
         .join()
         .unwrap()
+    }
+
+    #[test]
+    fn rendering_through_the_realtime_pool_matches_serial_rendering_exactly() {
+        prepare_realtime();
+        use soundcraft_audio_io::AudioBuffer;
+        use soundcraft_model::{ClipId, Insert, SourceAudio, SourceId};
+        let mut s = Session::default();
+        s.pool.insert(
+            SourceId(1),
+            std::sync::Arc::new(SourceAudio::new(AudioBuffer {
+                sample_rate: 48000,
+                channels: vec![(0..8192).map(|i| (i as f32 * 0.02).sin() * 0.3).collect()],
+            })),
+        );
+        for k in 0..24u64 {
+            let t = s.add_track(TrackKind::Audio, ChannelFormat::Mono, None);
+            let tr = s.track_mut(t).unwrap();
+            tr.playlist_mut().unwrap().clips.push(Clip::audio(ClipId(500 + k), "c", SourceId(1), 0, 0, 8192));
+            tr.mixer.inserts[0] = Some(Insert::new("eq_7band"));
+            tr.mixer.pan = vec![(k as f32 / 12.0) - 1.0, 0.0];
+        }
+        let s = std::sync::Arc::new(s);
+        let render = |mode: RealtimeParallel| {
+            let s = std::sync::Arc::clone(&s);
+            std::thread::spawn(move || {
+                mark_audio_thread();
+                set_realtime_parallel(mode);
+                let mut m = MixEngine::new(48000., 512);
+                let mut all = Vec::new();
+                for b in 0..16 {
+                    let mut out = vec![vec![0.0f32; 512]; 2];
+                    m.render(&s, b * 512, 512, &mut out);
+                    all.extend(out.into_iter().flatten());
+                }
+                all
+            })
+            .join()
+            .unwrap()
+        };
+        let serial = render(RealtimeParallel::Off);
+        let pooled = render(RealtimeParallel::On);
+        set_realtime_parallel(RealtimeParallel::Adaptive);
+        assert!(serial.iter().any(|x| x.abs() > 0.01), "the mix is not silent");
+        assert_eq!(serial, pooled, "the pool changes who renders a strip, never what it renders");
     }
 
     #[test]

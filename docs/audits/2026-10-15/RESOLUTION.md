@@ -21,8 +21,8 @@ now has a regression test beside its fix.
 | A02 | `222f23e` | `protection_tests` (apps/soundcraft `control_server.rs`, all eight passing) |
 | A14 | `e52e8ec` | `external_effects_and_session_replacement_are_not_admitted` (engine `group.rs`) |
 | A06 | `8f02fe5`, then `4574c5b` (off-callback capture) | `a_slow_serializer_never_blocks_the_audio_thread`, `clap_capture` (playback) |
-| A08 | `043ca9d`, `ca4a397`; measured in `04d60fa` | `realtime_bench` example (serial worst 9.2 ms vs pool 1.7 ms at 128 tracks idle; pool tail 3–4× worse under CPU contention) |
+| A08 | `043ca9d`, `ca4a397`, `f69578f`; measured in `04d60fa`; dedicated pool in `soundcraft-rt-pool` | `realtime_bench` example. Shared rayon pool: 5× faster idle but a 3–4× worse tail under CPU contention. Dedicated pool: idle 128 tracks worst 1.5 ms (serial 12 ms); under 12 busy loops worst 14 ms (rayon 71 ms, serial 36 ms). `rt-pool` tests include a zero-allocation check and a Miri run |
 
-Open: dedicated realtime workers with a deadline (A08), real-device dropout measurement, companion
+Open: real-device dropout measurement, companion
 token handling for the control channel (P1-E03), the web shell's direct session edits and the
 `processing_order` depth heuristic.

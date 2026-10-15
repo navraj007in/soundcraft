@@ -6,7 +6,7 @@
 //! 99.9th-percentile times with that budget, not the mean.
 
 use soundcraft_audio_io::AudioBuffer;
-use soundcraft_mix::{MixEngine, RealtimeParallel, mark_audio_thread, set_realtime_parallel};
+use soundcraft_mix::{MixEngine, RealtimeParallel, mark_audio_thread, prepare_realtime, set_realtime_parallel};
 use soundcraft_model::{ChannelFormat, Clip, Insert, Session, SourceAudio, SourceId, TrackKind};
 use std::sync::Arc;
 use std::time::Instant;
@@ -51,6 +51,7 @@ fn run(s: &Session, blocks: usize, block: usize, mode: RealtimeParallel) -> Vec<
 fn main() {
     let args: Vec<usize> = std::env::args().skip(1).filter_map(|a| a.parse().ok()).collect();
     let (tracks, blocks, block) = (args.first().copied().unwrap_or(64), args.get(1).copied().unwrap_or(2000), args.get(2).copied().unwrap_or(512));
+    prepare_realtime();
     let s = session(tracks, (blocks + 40) * block);
     let budget = block as f64 / 48.0;
     for mode in [RealtimeParallel::Off, RealtimeParallel::On, RealtimeParallel::Adaptive] {

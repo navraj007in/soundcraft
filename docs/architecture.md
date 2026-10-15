@@ -13,9 +13,9 @@ nonlinear meters, faders, pan gestures, fonts and the live theme resolver remain
 requires Rust 1.95 or later without raising the core workspace's Rust 1.90 declaration.
 
 ```
-L0  time        audio-io        midi        video   (standalone: no workspace deps)
-L1  dsp         clap-host   vst3-host   au-host     (plugins; the three hosts are the only crates
-                                                     allowed `unsafe`, confined to their FFI modules)
+L0  time        audio-io        midi        video   rt-pool   (standalone: no workspace deps)
+L1  dsp         clap-host   vst3-host   au-host     (plugins; the three hosts and rt-pool are the
+                                                     only crates allowed `unsafe`, each confined to one module)
 L2  model                                       (the session document)
 L3  mix                                         (the mix engine)
 L4  engine      playback                        (commands, undo, I/O · audio devices)
@@ -55,7 +55,7 @@ Device I/O today is the system's *default* output and *default* input device, op
 separate cpal streams; the mix renders 512-sample blocks and resamples to the device rate when
 they differ. There is no device or buffer-size selection, no ASIO, and no MIDI device layer yet
 (see [`hardware-parity.md`](hardware-parity.md)). Sources are decoded whole into the `SourcePool`
-and recordings stream to a take WAV on disk while recording (header refreshed about every second, so a crash keeps the audio); the finished take is decoded whole into the pool at stop. Plugin state is read off the audio thread: the callback hands its plugins over, the caller serialises them, and they go back.
+and recordings stream to a take WAV on disk while recording (header refreshed about every second, so a crash keeps the audio); the finished take is decoded whole into the pool at stop. The audio callback shares a block's strips with a dedicated worker pool (`rt-pool`: persistent threads, the callback works through the strips alongside them, no allocation or locks) when serial rendering nears its time budget; offline renders use rayon. Plugin state is read off the audio thread: the callback hands its plugins over, the caller serialises them, and they go back.
 
 `soundcraft-video` holds our own H.264, ProRes and Motion JPEG decoders and the ISO-BMFF demuxer
 for the video track. Hosted plugins (`clap-host`, `vst3-host`, `au-host`) are scanned, created and
@@ -77,6 +77,7 @@ app as an MCP server. See `control-protocol.md` and `mcp.md`.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Dedicated realtime worker pool (rt-pool) for the audio callback |
 | 2026-10-15 | minor | Routing: topological aux order, loops refused by commands |
 | 2026-10-15 | minor | Recording described as streaming to disk (was "in memory until stop"); plugin state capture off the audio thread |
 | 2026-10-10 | minor | Added video, vst3-host and au-host to the layer diagram; documented device I/O limits and in-memory media |

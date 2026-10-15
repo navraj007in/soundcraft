@@ -20,6 +20,7 @@ log.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rayon.workspace = true
+soundcraft-rt-pool.workspace = true
 
 [lints]
 workspace = true

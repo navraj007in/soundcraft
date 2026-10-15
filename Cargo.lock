@@ -3560,6 +3560,7 @@ dependencies = [
  "soundcraft-dsp",
  "soundcraft-midi",
  "soundcraft-model",
+ "soundcraft-rt-pool",
  "soundcraft-time",
  "soundcraft-vst3-host",
 ]
@@ -3600,6 +3601,10 @@ dependencies = [
  "soundcraft-model",
  "soundcraft-time",
 ]
+
+[[package]]
+name = "soundcraft-rt-pool"
+version = "0.6.1"
 
 [[package]]
 name = "soundcraft-time"

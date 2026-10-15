@@ -463,6 +463,8 @@ pub struct Player {
 impl Player {
     /// Open the default output device. Never fails: without a device it runs a silent clock.
     pub fn new(session: Arc<Session>) -> Player {
+        // The callback's helper threads, started here (never on the audio thread).
+        soundcraft_mix::prepare_realtime();
         let p = Player::open(Arc::clone(&session));
         // Hand the initial session's third-party plugins over.
         p.update_session(session);

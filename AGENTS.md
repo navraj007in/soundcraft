@@ -26,6 +26,7 @@ People trust SoundCraft with their recordings; a crash loses takes. **This outra
 - No panics in non-test code: no `unwrap()`, `expect()`, `panic!`, `unreachable!`, `todo!`, `unimplemented!`; no `unsafe` (`unsafe_code = "forbid"`).
 - The one named exception is `soundcraft-clap-host` (`crates/clap-host`), the isolated unsafe helper crate for CLAP plugin FFI: `unsafe_code = "deny"` crate-wide, allowed only in `src/ffi.rs` with a `// SAFETY:` comment on every block, safe `Result` API.
 - The same exception, same rules, for `soundcraft-vst3-host` (`crates/vst3-host`), the isolated unsafe helper crate for VST3 plugin FFI (COM vtables via the `vst3` bindings, module loading, host-side COM objects).
+- And for `soundcraft-rt-pool` (`crates/rt-pool`), the isolated unsafe helper crate for the audio callback's worker pool: `unsafe_code = "deny"` crate-wide, allowed only in `src/job.rs` (one lifetime-erased batch of items, protocol documented in the module, claims by compare-exchange, completion barrier before return), safe API, no allocation or locking per batch (a test counts allocations), checked under Miri.
 - And for `soundcraft-au-host` (`crates/au-host`), the isolated unsafe helper crate for Audio Unit FFI (hand-written AudioToolbox/CoreFoundation declarations, macOS only; a safe stub elsewhere).
 - Errors are `Result<T, E>` + `?`. An unfinished feature returns an "unsupported" error.
 - Input-derived numbers are hostile (files, commands, MCP/control params): `get()` not `[i]`, checked/saturating arithmetic, no NaN casts, cap allocations.
@@ -37,7 +38,7 @@ People trust SoundCraft with their recordings; a crash loses takes. **This outra
 ## Architecture (layers enforced by `cargo xtask layers`)
 | Layer | Crate | Role |
 |---|---|---|
-| L0 | `soundcraft-time`, `soundcraft-audio-io`, `soundcraft-midi` | Timebases/tempo/grid; audio file formats + peaks; Standard MIDI Files + MIDI ops |
+| L0 | `soundcraft-time`, `soundcraft-audio-io`, `soundcraft-midi`, `soundcraft-rt-pool` | Timebases/tempo/grid; audio file formats + peaks; Standard MIDI Files + MIDI ops; the audio callback's worker pool |
 | L1 | `soundcraft-dsp` | Plugins (EQ, dynamics, reverb, delay, modulation, harmonic, pitch, utility, instruments), offline processing, meters, FFT |
 | L2 | `soundcraft-model` | The session document (tracks, playlists, clips, mixer, routing, automation, markers, groups) |
 | L3 | `soundcraft-mix` | Mix engine shared by realtime playback and offline bounce |

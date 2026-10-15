@@ -1,0 +1,21 @@
+[package]
+name = "soundcraft-rt-pool"
+description = "SoundCraft realtime worker pool: persistent threads that share a block's strips with the audio callback without allocating, locking or waiting on a thread that has not started (the only crate besides the plugin hosts with unsafe code)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+# An isolated unsafe helper crate (craftrules never-crash), like the plugin hosts: it opts out of the
+# workspace `unsafe_code = "forbid"` for itself only. It denies unsafe everywhere and allows it solely
+# in `src/job.rs` (the lifetime-erased shared job). The rest mirrors
+# `[workspace.lints]`.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+too_many_arguments = "allow"
+type_complexity = "allow"
