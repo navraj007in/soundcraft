@@ -159,21 +159,11 @@ impl WebShell {
                     if missing.is_empty() { format!("Opened {name}") } else { format!("Opened {name} ({} missing media)", missing.len()) }
                 })
             }
-            // Imports are edits: one undo step each, like the import commands.
+            // Imports are edits: one undo step each, all or nothing, like the import commands.
             Purpose::Audio => {
-                let before = e.session_arc();
-                io::import_audio_bytes(e, name, bytes, None, None, at).map(|_| {
-                    e.push_undo("Import Audio", before);
-                    format!("Imported {name}")
-                })
+                e.transaction("Import Audio", |e| io::import_audio_bytes(e, name, bytes, None, None, at)).map(|_| format!("Imported {name}"))
             }
-            Purpose::Midi => {
-                let before = e.session_arc();
-                io::import_midi_bytes(e, bytes, at, true).map(|_| {
-                    e.push_undo("Import MIDI", before);
-                    format!("Imported {name}")
-                })
-            }
+            Purpose::Midi => e.transaction("Import MIDI", |e| io::import_midi_bytes(e, bytes, at, true)).map(|_| format!("Imported {name}")),
         };
         self.app.ui.status = result.unwrap_or_else(|err| err.to_string());
     }

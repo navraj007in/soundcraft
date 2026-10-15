@@ -26,6 +26,7 @@ mod options;
 mod plugin_state;
 mod query;
 mod sampler;
+mod session_info;
 mod setup_more;
 mod surround;
 mod track;
@@ -125,6 +126,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(vst3::specs());
         v.extend(surround::specs());
         v.extend(plugin_state::specs());
+        v.extend(session_info::specs());
         v.extend(instrument::specs());
         v.extend(sampler::specs());
         v.extend(video::specs());

@@ -326,6 +326,41 @@ impl Engine {
         }
     }
 
+    /// Run `f` as one all-or-nothing, undoable edit, for operations on data no command can take
+    /// (a dropped file's bytes in the browser build). On an error or a panic the document, revision
+    /// and dirty flag come back exactly as they were; on success one undo step labelled `label` is
+    /// recorded if the document changed. Frontends use this instead of editing through
+    /// `session_mut` and pushing their own undo entry.
+    pub fn transaction<T>(&mut self, label: &str, f: impl FnOnce(&mut Engine) -> Result<T>) -> Result<T> {
+        self.merge_key = None;
+        let (before, rev, dirty) = (Arc::clone(&self.doc), self.revision, self.dirty);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self)));
+        match result {
+            Ok(Ok(v)) => {
+                if !Arc::ptr_eq(&before, &self.doc) {
+                    self.push_undo(label, before);
+                }
+                Ok(v)
+            }
+            Ok(Err(e)) => {
+                self.restore_after_failure(before, rev, dirty);
+                Err(e)
+            }
+            Err(p) => {
+                self.restore_after_failure(before, rev, dirty);
+                Err(EngineError::Internal(label.to_string(), panic_message(&*p)))
+            }
+        }
+    }
+
+    fn restore_after_failure(&mut self, before: Arc<Session>, rev: u64, dirty: bool) {
+        if !Arc::ptr_eq(&before, &self.doc) {
+            self.doc = before;
+            self.revision = rev.wrapping_add(1);
+        }
+        self.dirty = dirty;
+    }
+
     fn execute_view(&mut self, spec: &CommandSpec, params: &Value) -> Result<Value> {
         let zoom = self.doc.edit.zoom;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (spec.run)(self, params)))
@@ -434,6 +469,46 @@ mod merge_tests {
         assert_eq!(e.undo_history().len(), 1);
         e.undo();
         assert_eq!(e.session().track(t).unwrap().mixer.volume_db, 0.0);
+    }
+
+    #[test]
+    fn a_transaction_is_one_undo_step_and_all_or_nothing() {
+        use soundcraft_model::{ChannelFormat, TrackKind};
+        let mut e = Engine::default();
+        let undo = e.undo_history().len();
+        e.transaction("Add two", |e| {
+            e.session_mut().add_track(TrackKind::Audio, ChannelFormat::Mono, None);
+            e.session_mut().add_track(TrackKind::Audio, ChannelFormat::Mono, None);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!((e.session().tracks.len(), e.undo_history().len()), (2, undo + 1));
+        assert_eq!(e.undo_label(), Some("Add two"));
+        // A failure after a change puts everything back, and records nothing.
+        let json_before = e.session().to_json().unwrap();
+        let err = e
+            .transaction::<()>("Doomed", |e| {
+                e.session_mut().add_track(TrackKind::Audio, ChannelFormat::Mono, None);
+                Err(EngineError::BadParams("x".into(), "nope".into()))
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("nope"));
+        assert_eq!(e.session().to_json().unwrap(), json_before);
+        assert_eq!(e.undo_history().len(), undo + 1);
+        // So does a panic.
+        let err = e
+            .transaction::<()>("Panics", |e| {
+                e.session_mut().add_track(TrackKind::Audio, ChannelFormat::Mono, None);
+                let v: Vec<u8> = Vec::new();
+                let _ = v[usize::MAX % 3];
+                Ok(())
+            })
+            .unwrap_err();
+        assert!(matches!(err, EngineError::Internal(..)), "{err:?}");
+        assert_eq!(e.session().to_json().unwrap(), json_before);
+        // A transaction that changes nothing records nothing.
+        e.transaction("Nothing", |_| Ok(())).unwrap();
+        assert_eq!(e.undo_history().len(), undo + 1);
     }
 
     #[test]

@@ -112,7 +112,7 @@ fn automation(app: &mut SoundApp, ctx: &egui::Context) {
             let id = format!("automation.enable.{}", f.replace(' ', "_"));
             let mut on = !app.engine.session().edit.flag(&format!("{id}.off"));
             if ui.checkbox(&mut on, f).changed() {
-                app.engine.session_mut().edit.set_flag(&format!("{id}.off"), !on);
+                let _ = app.run("automation.enable_parameter", json!({"parameter": f, "enabled": on}));
             }
         }
         ui.separator();
@@ -216,7 +216,10 @@ fn metadata(app: &mut SoundApp, ctx: &egui::Context) {
         let mut c = s.comments.clone();
         ui.label("Session comments");
         if ui.text_edit_multiline(&mut c).changed() {
-            app.engine.session_mut().comments = c;
+            // Typing is one undo step; a refused edit (too long) leaves the text as it was.
+            if let Err(e) = app.engine.execute_merged("session.set_comments", &json!({"comments": c}), "session.comments") {
+                app.ui.status = e.to_string();
+            }
         }
     });
     app.ui.show_metadata = open;
