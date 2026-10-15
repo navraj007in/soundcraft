@@ -70,7 +70,7 @@ not accept its token.
    closed.
 5. A line over 4 KiB before authentication, or over 1 MiB after, closes the connection. Reads are
    bounded; the current `lines()` reader is not.
-6. At most 8 open connections; further ones are refused.
+6. At most 16 open connections; further ones are refused.
 7. After authentication an idle connection closes after 10 minutes.
 
 ### 2.4 Allowlist (assistant scope)

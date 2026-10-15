@@ -40,7 +40,7 @@ Errors: `{"id": 1, "ok": false, "error": "bad parameters for `mix.volume`: no tr
 - The **first line** of every connection must be a JSON object. Anything else (an HTTP request from a
   web page, a WebSocket upgrade) closes the connection unanswered and forwards nothing, so a browser
   cannot drive the app.
-- Lines are size-limited (8 MiB in developer mode) and at most 8 connections are open at once.
+- Lines are size-limited (room for the largest plugin state, about 85 MiB, in developer mode; 4 KiB before and 1 MiB after authenticating in assistant mode) and at most 16 connections are open at once.
 - **Assistant mode** (`soundcraft --control <port> --control-token-file <path>`): the file holds a
   64-hex-character per-launch token, mode `0600`; the app refuses to open the channel if it is
   missing, malformed or accessible to other users. The first message must be

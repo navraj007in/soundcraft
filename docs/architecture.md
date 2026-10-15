@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** minor (recording streams to disk; plugin state capture off the audio thread; crate diagram brought up to date: video, vst3-host, au-host; device I/O limits) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** minor (recording streams to disk; plugin state read through per-instance handles; crate diagram brought up to date: video, vst3-host, au-host; device I/O limits) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 SoundCraft is a Cargo workspace of small crates with enforced layering (`cargo xtask layers`).
 Nothing below the UI knows about egui, so the interface can be replaced.
@@ -47,15 +47,16 @@ report.
 `soundcraft_mix::MixEngine::render(session, pos, frames, out)` renders one block: clips (gain,
 fades, clip effects) → trim → inserts → pre-fader sends → fader/mute (automation, VCA, trim
 automation) → post-fader sends → pan → busses → aux inputs → master faders. Independent strips
-process in parallel; plugin delay compensation aligns every path through the whole routing graph. Auxes are ordered topologically, commands refuse to create a routing loop (a loaded file that has one still renders, with the loop's closing edge cut). The same engine renders
-bounces offline (`render_range`) and realtime playback (`soundcraft_playback::Player`, which owns
-it on the audio thread and receives new session snapshots through a channel).
+process in parallel; plugin delay compensation aligns every path through the whole routing graph, the master faders' inserts included. Auxes are ordered topologically, commands refuse to create a routing loop (a loaded file that has one still renders, with the loop's closing edge cut). The same engine renders
+bounces offline (`RangeRender`, streamed to the file block by block) and realtime playback
+(`soundcraft_playback::Player`, which owns it on the audio thread and receives new session
+snapshots through a channel).
 
 Device I/O today is the system's *default* output and *default* input device, opened as two
 separate cpal streams; the mix renders 512-sample blocks and resamples to the device rate when
 they differ. There is no device or buffer-size selection, no ASIO, and no MIDI device layer yet
 (see [`hardware-parity.md`](hardware-parity.md)). Sources are decoded whole into the `SourcePool`
-and recordings stream to a take WAV on disk while recording (header refreshed about every second, so a crash keeps the audio); the finished take is decoded whole into the pool at stop. The audio callback shares a block's strips with a dedicated worker pool (`rt-pool`: persistent threads, the callback works through the strips alongside them, no allocation or locks) when serial rendering nears its time budget; offline renders use rayon. Plugin state is read off the audio thread: the callback hands its plugins over, the caller serialises them, and they go back.
+and recordings stream to a take WAV on disk while recording (header refreshed about every second, so a crash keeps the audio); the finished take is decoded whole into the pool at stop. The audio callback shares a block's strips with a dedicated worker pool (`rt-pool`: persistent threads, the callback works through the strips alongside them, no allocation or locks) when serial rendering nears its time budget; offline renders use rayon. Plugin state is read on the UI thread through a handle each instance leaves behind, never on the audio thread.
 
 `soundcraft-video` holds our own H.264, ProRes and Motion JPEG decoders and the ISO-BMFF demuxer
 for the video track. Hosted plugins (`clap-host`, `vst3-host`, `au-host`) are scanned, created and
@@ -79,6 +80,7 @@ app as an MCP server. See `control-protocol.md` and `mcp.md`.
 |---|---|---|
 | 2026-10-15 | minor | Dedicated realtime worker pool (rt-pool) for the audio callback |
 | 2026-10-15 | minor | Routing: topological aux order, loops refused by commands |
-| 2026-10-15 | minor | Recording described as streaming to disk (was "in memory until stop"); plugin state capture off the audio thread |
+| 2026-10-15 | minor | Recording described as streaming to disk (was "in memory until stop"); plugin state read through per-instance handles |
+| 2026-10-13 | trivial | delay compensation includes the master faders' inserts (#351) |
 | 2026-10-10 | minor | Added video, vst3-host and au-host to the layer diagram; documented device I/O limits and in-memory media |
 | 2026-10-05 | major | First architecture overview |

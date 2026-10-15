@@ -47,44 +47,9 @@ pub struct BarBeat {
 
 /// Tempo and meter changes for a session. Always has at least one of each, at tick 0.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(try_from = "RawTempoMap")]
 pub struct TempoMap {
     tempos: Vec<TempoEvent>,
     meters: Vec<MeterEvent>,
-}
-
-/// The serialized form of a [`TempoMap`], checked on the way in.
-#[derive(serde::Deserialize)]
-struct RawTempoMap {
-    tempos: Vec<TempoEvent>,
-    meters: Vec<MeterEvent>,
-}
-
-impl TryFrom<RawTempoMap> for TempoMap {
-    type Error = TimeError;
-    fn try_from(raw: RawTempoMap) -> Result<Self, TimeError> {
-        if raw.tempos.len() > MAX_EVENTS || raw.meters.len() > MAX_EVENTS {
-            return Err(TimeError::Map("too many events"));
-        }
-        if raw.tempos.first().map(|e| e.tick) != Some(0) || raw.meters.first().map(|e| e.tick) != Some(0) {
-            return Err(TimeError::Map("the first event must be at tick 0"));
-        }
-        if !raw.tempos.windows(2).all(|w| w[0].tick < w[1].tick) || !raw.meters.windows(2).all(|w| w[0].tick < w[1].tick) {
-            return Err(TimeError::Map("events must be in strictly increasing tick order"));
-        }
-        if raw.tempos.iter().any(|e| e.tick > MAX_TICK) || raw.meters.iter().any(|e| e.tick > MAX_TICK) {
-            return Err(TimeError::Map("event beyond the supported range"));
-        }
-        for e in &raw.tempos {
-            valid_bpm(e.bpm)?;
-        }
-        for m in &raw.meters {
-            if !(1..=64).contains(&m.numerator) || ![1, 2, 4, 8, 16, 32, 64].contains(&m.denominator) {
-                return Err(TimeError::Meter(m.numerator, m.denominator));
-            }
-        }
-        Ok(TempoMap { tempos: raw.tempos, meters: raw.meters })
-    }
 }
 
 impl Default for TempoMap {
@@ -95,6 +60,10 @@ impl Default for TempoMap {
 
 fn valid_bpm(bpm: f64) -> Result<f64, TimeError> {
     if bpm.is_finite() && (5.0..=1000.0).contains(&bpm) { Ok(bpm) } else { Err(TimeError::Tempo(bpm)) }
+}
+
+fn valid_meter(numerator: u32, denominator: u32) -> bool {
+    (1..=64).contains(&numerator) && [1, 2, 4, 8, 16, 32, 64].contains(&denominator)
 }
 
 impl TempoMap {
@@ -110,6 +79,27 @@ impl TempoMap {
     }
     pub fn meters(&self) -> &[MeterEvent] {
         &self.meters
+    }
+
+    /// Repair a map read from a file: only valid tempos and meters, in tick order, with one of each
+    /// at tick 0.
+    pub fn sanitize(&mut self) {
+        self.tempos.retain(|e| (0..=MAX_TICK).contains(&e.tick) && valid_bpm(e.bpm).is_ok());
+        self.tempos.sort_by_key(|e| e.tick);
+        self.tempos.dedup_by_key(|e| e.tick);
+        self.tempos.truncate(MAX_EVENTS);
+        if self.tempos.first().is_none_or(|e| e.tick > 0) {
+            let bpm = self.tempos.first().map_or(120.0, |e| e.bpm);
+            self.tempos.insert(0, TempoEvent { tick: 0, bpm });
+        }
+        self.meters.retain(|m| (0..=MAX_TICK).contains(&m.tick) && valid_meter(m.numerator, m.denominator));
+        self.meters.sort_by_key(|m| m.tick);
+        self.meters.dedup_by_key(|m| m.tick);
+        self.meters.truncate(MAX_EVENTS);
+        if self.meters.first().is_none_or(|m| m.tick > 0) {
+            let (numerator, denominator) = self.meters.first().map_or((4, 4), |m| (m.numerator, m.denominator));
+            self.meters.insert(0, MeterEvent { tick: 0, numerator, denominator });
+        }
     }
 
     /// Insert or replace the tempo at `tick`.
@@ -138,13 +128,31 @@ impl TempoMap {
     }
 
     /// Insert or replace the meter at `tick` (snapped to the bar line at or before it).
+    /// Later meter changes keep their bar numbers, so they stay on bar lines.
     pub fn set_meter(&mut self, tick: i64, numerator: u32, denominator: u32) -> Result<(), TimeError> {
-        if !(1..=64).contains(&numerator) || ![1, 2, 4, 8, 16, 32, 64].contains(&denominator) {
+        if !valid_meter(numerator, denominator) {
             return Err(TimeError::Meter(numerator, denominator));
         }
         let tick = if tick <= 0 { 0 } else { self.bar_start_tick(self.bar_beat_at_tick(tick.min(MAX_TICK)).bar) };
-        let ev = MeterEvent { tick, numerator, denominator };
-        match self.meters.binary_search_by(|e| e.tick.cmp(&tick)) {
+        let later = self.take_meters_after(tick);
+        self.put_meter(MeterEvent { tick, numerator, denominator });
+        self.restore_meters_at_bars(later);
+        Ok(())
+    }
+
+    /// Remove a meter event (the one at tick 0 is kept). Later meter changes keep their bar numbers.
+    pub fn remove_meter(&mut self, tick: i64) -> bool {
+        if tick == 0 || !self.meters.iter().any(|e| e.tick == tick) {
+            return false;
+        }
+        let later = self.take_meters_after(tick);
+        self.meters.retain(|e| e.tick != tick);
+        self.restore_meters_at_bars(later);
+        true
+    }
+
+    fn put_meter(&mut self, ev: MeterEvent) {
+        match self.meters.binary_search_by(|e| e.tick.cmp(&ev.tick)) {
             Ok(i) => {
                 if let Some(e) = self.meters.get_mut(i) {
                     *e = ev;
@@ -152,16 +160,21 @@ impl TempoMap {
             }
             Err(i) => self.meters.insert(i, ev),
         }
-        Ok(())
     }
 
-    pub fn remove_meter(&mut self, tick: i64) -> bool {
-        if tick == 0 {
-            return false;
+    /// Remove the meters after `tick`, returning each with the bar it starts.
+    fn take_meters_after(&mut self, tick: i64) -> Vec<(i64, MeterEvent)> {
+        let later: Vec<_> = self.meters.iter().filter(|e| e.tick > tick).map(|e| (self.bar_beat_at_tick(e.tick).bar, *e)).collect();
+        self.meters.retain(|e| e.tick <= tick);
+        later
+    }
+
+    /// Put meters back at the start of their bars under the current earlier meters, in bar order.
+    fn restore_meters_at_bars(&mut self, later: Vec<(i64, MeterEvent)>) {
+        for (bar, ev) in later {
+            let tick = self.bar_start_tick(bar);
+            self.put_meter(MeterEvent { tick, ..ev });
         }
-        let before = self.meters.len();
-        self.meters.retain(|e| e.tick != tick);
-        before != self.meters.len()
     }
 
     /// Tempo in effect at `tick`.
@@ -239,12 +252,11 @@ impl TempoMap {
 
     /// Tick of the first beat of `bar` (1-based; bars before 1 extend the first meter backwards).
     pub fn bar_start_tick(&self, bar: i64) -> i64 {
-        let bar = bar.clamp(-MAX_TICK, MAX_TICK);
         let mut cur_bar = 1i64;
         let mut cur_tick = 0i64;
         let first = self.meter_at_tick(0);
         if bar < 1 {
-            return (bar - 1).saturating_mul(first.ticks_per_bar());
+            return bar.saturating_sub(1).saturating_mul(first.ticks_per_bar());
         }
         for (i, m) in self.meters.iter().enumerate() {
             let next_tick = self.meters.get(i + 1).map(|n| n.tick);
@@ -334,6 +346,13 @@ mod tests {
     }
 
     #[test]
+    fn minimum_bar_saturates_instead_of_overflowing() {
+        let m = TempoMap::default();
+        assert_eq!(m.bar_start_tick(i64::MIN), i64::MIN);
+        assert_eq!(m.bar_start_tick(0), -TICKS_PER_QUARTER * 4);
+    }
+
+    #[test]
     fn tempo_change_is_integrated() {
         let mut m = TempoMap::default();
         let sr = SampleRate::HZ_48000;
@@ -363,6 +382,22 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_keeps_what_the_setters_accept() {
+        let tempo = |tick, bpm| TempoEvent { tick, bpm };
+        let meter = |tick, numerator, denominator| MeterEvent { tick, numerator, denominator };
+        let mut m = TempoMap {
+            tempos: vec![tempo(960, 4e9), tempo(3840, 90.0), tempo(-5, 100.0), tempo(1920, 60.0), tempo(1920, 70.0)],
+            meters: vec![meter(0, 0, 4), meter(3840, 3, 4)],
+        };
+        m.sanitize();
+        assert_eq!(m.tempos(), [tempo(0, 60.0), tempo(1920, 60.0), tempo(3840, 90.0)]);
+        assert_eq!(m.meters(), [meter(0, 3, 4), meter(3840, 3, 4)]);
+        let mut empty = TempoMap { tempos: Vec::new(), meters: Vec::new() };
+        empty.sanitize();
+        assert_eq!(empty, TempoMap::default());
+    }
+
+    #[test]
     fn rejects_bad_values() {
         let mut m = TempoMap::default();
         assert!(m.set_tempo(0, f64::NAN).is_err());
@@ -389,26 +424,27 @@ mod hostile_tests {
     }
 
     #[test]
-    fn a_stored_map_must_be_ordered_in_range_and_start_at_zero() {
-        let ok = r#"{"tempos":[{"tick":0,"bpm":120.0},{"tick":960,"bpm":90.0}],"meters":[{"tick":0,"numerator":4,"denominator":4}]}"#;
-        assert!(parse(ok).is_ok());
-        let bad = [
+    fn a_hostile_stored_map_is_repaired_to_something_the_conversions_can_handle() {
+        let sr = SampleRate::HZ_48000;
+        let hostile = [
             r#"{"tempos":[{"tick":0,"bpm":120.0},{"tick":-9223372036854775808,"bpm":120.0},{"tick":9223372036854775807,"bpm":120.0}],"meters":[{"tick":0,"numerator":4,"denominator":4}]}"#,
-            r#"{"tempos":[],"meters":[{"tick":0,"numerator":4,"denominator":4}]}"#,
-            r#"{"tempos":[{"tick":5,"bpm":120.0}],"meters":[{"tick":0,"numerator":4,"denominator":4}]}"#,
-            r#"{"tempos":[{"tick":0,"bpm":0.0}],"meters":[{"tick":0,"numerator":4,"denominator":4}]}"#,
-            r#"{"tempos":[{"tick":0,"bpm":120.0}],"meters":[{"tick":0,"numerator":0,"denominator":4}]}"#,
+            r#"{"tempos":[],"meters":[]}"#,
+            r#"{"tempos":[{"tick":5,"bpm":120.0}],"meters":[{"tick":0,"numerator":0,"denominator":4}]}"#,
+            r#"{"tempos":[{"tick":0,"bpm":0.0}],"meters":[{"tick":9223372036854775807,"numerator":4,"denominator":4}]}"#,
             r#"{"tempos":[{"tick":0,"bpm":120.0},{"tick":960,"bpm":90.0},{"tick":960,"bpm":80.0}],"meters":[{"tick":0,"numerator":4,"denominator":4}]}"#,
         ];
-        for b in bad {
-            assert!(parse(b).is_err(), "{b}");
+        for h in hostile {
+            let mut m = parse(h).expect("the shape is valid JSON");
+            m.sanitize();
+            assert_eq!(m.tempos().first().map(|e| e.tick), Some(0), "{h}");
+            assert_eq!(m.meters().first().map(|e| e.tick), Some(0), "{h}");
+            assert!(m.tempos().windows(2).all(|w| w[0].tick < w[1].tick) && m.tempos().iter().all(|e| (0..=MAX_TICK).contains(&e.tick)), "{h}");
+            // Nothing in a repaired map may overflow a conversion.
+            for t in [i64::MIN, -1, 0, 960, MAX_TICK, i64::MAX] {
+                let _ = m.tick_to_samples(t, sr);
+                let _ = m.bar_beat_at_tick(t);
+            }
         }
-    }
-
-    #[test]
-    fn a_zero_sample_rate_does_not_deserialize() {
-        assert!(serde_json::from_str::<SampleRate>("0").is_err());
-        assert!(serde_json::from_str::<SampleRate>("48000").is_ok());
     }
 
     #[test]

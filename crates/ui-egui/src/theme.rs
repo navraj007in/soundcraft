@@ -8,11 +8,64 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// Whether the Light palette is active. Dark is the default (the incumbent is dark-only).
 static LIGHT_THEME: AtomicBool = AtomicBool::new(false);
 
-/// Unit tests that change the process-wide palette must own it until their assertions finish.
+/// Unit tests that change or read the process-wide palette must own it until their assertions
+/// finish. The lock is re-entrant per thread, so a test may hold it and still build apps
+/// (`SoundApp::new` takes it too) without deadlocking itself.
 #[cfg(test)]
-pub(crate) fn lock_test_palette() -> std::sync::MutexGuard<'static, ()> {
-    static PALETTE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    PALETTE.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+pub(crate) fn lock_test_palette() -> TestPaletteGuard {
+    TestPaletteGuard::acquire()
+}
+
+/// RAII handle for the re-entrant, per-thread test palette lock; see [`lock_test_palette`].
+#[cfg(test)]
+pub(crate) struct TestPaletteGuard;
+
+#[cfg(test)]
+impl TestPaletteGuard {
+    fn acquire() -> Self {
+        palette_lock::acquire();
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestPaletteGuard {
+    fn drop(&mut self) {
+        palette_lock::release();
+    }
+}
+
+#[cfg(test)]
+mod palette_lock {
+    use std::cell::{Cell, RefCell};
+    use std::sync::{Mutex, MutexGuard, PoisonError};
+
+    static PALETTE: Mutex<()> = Mutex::new(());
+
+    thread_local! {
+        /// How many guards this thread holds; the OS lock is taken on 0→1 and released on 1→0.
+        static DEPTH: Cell<usize> = const { Cell::new(0) };
+        static GUARD: RefCell<Option<MutexGuard<'static, ()>>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn acquire() {
+        DEPTH.with(|depth| {
+            if depth.get() == 0 {
+                GUARD.with(|guard| *guard.borrow_mut() = Some(PALETTE.lock().unwrap_or_else(PoisonError::into_inner)));
+            }
+            depth.set(depth.get() + 1);
+        });
+    }
+
+    pub(super) fn release() {
+        DEPTH.with(|depth| {
+            let left = depth.get().saturating_sub(1);
+            depth.set(left);
+            if left == 0 {
+                GUARD.with(|guard| *guard.borrow_mut() = None);
+            }
+        });
+    }
 }
 
 /// The Appearance setting (`ui.theme {mode}`). Dark by default; System and Light are opt-in.
@@ -59,10 +112,14 @@ pub struct Tokens {
     pub toolbar_group: Color32,
     pub border: Color32,
     pub border_light: Color32,
+    /// The lit top/left edge of raised panels: track headers and Mix strips.
+    pub edge_light: Color32,
     pub text: Color32,
     pub text_dim: Color32,
     /// Text on a filled control that is on or selected (dark teal fill in Dark, accent fill in Light).
     pub text_on_fill: Color32,
+    /// Dark text for bright fills (a selected name, flags on a coloured chip).
+    pub text_dark: Color32,
     pub header_text: Color32,
     pub counter_bg: Color32,
     pub counter_text: Color32,
@@ -149,16 +206,15 @@ pub struct Tokens {
     pub knob_ring: Color32,
     /// Pan knob pointer.
     pub knob_pointer: Color32,
-    /// Mix insert slot holding a plugin.
-    pub insert_on: Color32,
-    /// Mix insert slot, bypassed.
-    pub insert_bypass: Color32,
-    /// Mix send slot in use.
-    pub send_on: Color32,
-    /// Mix insert/send slot outline.
-    pub slot_border: Color32,
     /// Mix-window section captions (INSERTS A-E, I/O…).
     pub section_label: Color32,
+    /// Plugin slots, as Pro Tools draws them: the well they sit in, an empty slot, a used slot's
+    /// face (top, bottom), a bypassed one's, and the dots, letters and arrows on them.
+    pub slot_well: Color32,
+    pub slot_empty: Color32,
+    pub slot_face: [Color32; 2],
+    pub slot_bypassed: [Color32; 2],
+    pub slot_mark: Color32,
 }
 
 impl Tokens {
@@ -173,6 +229,7 @@ impl Tokens {
         text: Color32::from_rgb(230, 233, 237),
         text_dim: Color32::from_rgb(169, 177, 186),
         text_on_fill: Color32::from_rgb(214, 251, 246),
+        text_dark: Color32::from_rgb(16, 16, 16),
         header_text: Color32::from_rgb(230, 233, 237),
         counter_bg: Color32::from_rgb(10, 12, 14),
         counter_text: Color32::from_rgb(159, 243, 232),
@@ -238,11 +295,13 @@ impl Tokens {
         knob_bg: Color32::from_rgb(46, 51, 56),
         knob_ring: Color32::from_rgb(107, 118, 131),
         knob_pointer: Color32::from_rgb(230, 233, 237),
-        insert_on: Color32::from_rgb(39, 65, 66),
-        insert_bypass: Color32::from_rgb(68, 64, 49),
-        send_on: Color32::from_rgb(46, 59, 78),
-        slot_border: Color32::from_rgb(14, 16, 18),
         section_label: Color32::from_rgb(169, 177, 186),
+        edge_light: Color32::from_rgba_premultiplied(20, 20, 20, 20),
+        slot_well: Color32::from_rgb(43, 43, 43),
+        slot_empty: Color32::from_rgb(39, 39, 39),
+        slot_face: [Color32::from_rgb(92, 92, 92), Color32::from_rgb(75, 75, 75)],
+        slot_bypassed: [Color32::from_rgb(66, 96, 146), Color32::from_rgb(50, 76, 120)],
+        slot_mark: Color32::from_rgb(159, 159, 159),
     };
 
     pub const LIGHT: Tokens = Tokens {
@@ -256,6 +315,7 @@ impl Tokens {
         text: Color32::from_rgb(20, 24, 28),
         text_dim: Color32::from_rgb(71, 82, 93),
         text_on_fill: Color32::from_rgb(255, 255, 255),
+        text_dark: Color32::from_rgb(16, 17, 20),
         header_text: Color32::from_rgb(20, 24, 28),
         counter_bg: Color32::from_rgb(255, 255, 255),
         counter_text: Color32::from_rgb(8, 86, 79),
@@ -321,11 +381,13 @@ impl Tokens {
         knob_bg: Color32::from_rgb(255, 255, 255),
         knob_ring: Color32::from_rgb(118, 129, 141),
         knob_pointer: Color32::from_rgb(20, 24, 28),
-        insert_on: Color32::from_rgb(205, 223, 223),
-        insert_bypass: Color32::from_rgb(225, 218, 207),
-        send_on: Color32::from_rgb(208, 220, 237),
-        slot_border: Color32::from_rgb(201, 208, 215),
         section_label: Color32::from_rgb(71, 82, 93),
+        edge_light: Color32::from_rgba_premultiplied(150, 150, 150, 150),
+        slot_well: Color32::from_rgb(212, 214, 218),
+        slot_empty: Color32::from_rgb(198, 200, 205),
+        slot_face: [Color32::from_rgb(244, 245, 247), Color32::from_rgb(214, 216, 220)],
+        slot_bypassed: [Color32::from_rgb(190, 210, 240), Color32::from_rgb(160, 186, 228)],
+        slot_mark: Color32::from_rgb(92, 95, 102),
     };
 
     pub fn current() -> Tokens {
@@ -345,6 +407,20 @@ pub fn wants_light(ctx: &egui::Context, mode: ThemeMode) -> bool {
         ThemeMode::Dark => false,
         ThemeMode::System => ctx.system_theme() == Some(egui::Theme::Light),
     }
+}
+
+/// A track's header and lane backgrounds in the Edit window, tinted with its colour by `tint` (0..1).
+pub fn track_backgrounds(color: [u8; 3], selected: bool, tint: f32) -> (Color32, Color32) {
+    let t = Tokens::current();
+    let k = tint.clamp(0.0, 1.0);
+    if k <= 0.0 {
+        return if selected { (t.header_selected, t.playlist_alt) } else { (t.panel_bg2, t.playlist_bg) };
+    }
+    let c = rgb(color);
+    let header = t.panel_bg2.lerp_to_gamma(c, k * 0.55);
+    let header = if selected { crate::widgets::shade(header, 0.1) } else { header };
+    let lane = if selected { t.playlist_alt } else { t.playlist_bg }.lerp_to_gamma(c, k * 0.2);
+    (header, lane)
 }
 
 /// The four colours of a clip for a track colour, from the design's OKLCH recipe (see `oklch.rs`).
@@ -535,12 +611,39 @@ mod tests {
     }
 
     #[test]
+    fn test_palette_lock_is_reentrant_and_excludes_other_threads() {
+        // Regression for the parallel-run flakes: the process-wide palette must be owned for a
+        // whole test, re-entrant on the owning thread (so `SoundApp::new` can take it too), and
+        // exclusive against other threads (so a frame cannot flip it mid-test).
+        let outer = lock_test_palette();
+        let inner = lock_test_palette();
+        let app = SoundApp::new(soundcraft_engine::Engine::default(), None, Services::default());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _held = lock_test_palette();
+            let _ = tx.send(());
+        });
+        assert!(rx.recv_timeout(std::time::Duration::from_millis(100)).is_err(), "another thread must wait for the palette lock");
+        drop(inner);
+        drop(outer);
+        drop(app);
+        // Other tests compete for the lock too, and some hold it for seconds: allow for a queue.
+        assert!(rx.recv_timeout(std::time::Duration::from_secs(120)).is_ok(), "the palette lock must be released when every holder drops it");
+    }
+
+    #[test]
     fn dark_is_the_default() {
         assert_eq!(ThemeMode::default(), ThemeMode::Dark);
         assert_eq!(UiState::default().theme, ThemeMode::Dark);
         // Prefs saved before the setting existed load as Dark.
         let old: UiState = serde_json::from_value(json!({"show_tracks_list": true})).unwrap_or_default();
         assert_eq!(old.theme, ThemeMode::Dark);
+    }
+
+    #[test]
+    fn prefs_saved_before_track_tint_get_the_default() {
+        let ui: UiState = serde_json::from_value(json!({"theme": "light"})).unwrap();
+        assert!((ui.track_tint - 0.5).abs() < f32::EPSILON);
     }
 
     #[test]

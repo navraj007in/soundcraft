@@ -156,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    fn uneven_channels_use_shortest_and_a_zero_rate_cannot_be_built() {
+    fn zero_rate_has_unknown_duration_and_uneven_channels_use_shortest() {
         let mut e = crate::demo::demo_engine();
         let id = e.session().sources.first().unwrap().id;
         let sr = e.session().sample_rate.hz();
@@ -165,8 +165,9 @@ mod tests {
         let r = check(&mut e);
         assert!(r["issues"].as_array().unwrap().iter().any(|i| i["code"] == "uneven_channels"));
         assert!(r["issues"].as_array().unwrap().iter().any(|i| i["code"] == "source_bounds"));
-        // A zero rate can no longer be constructed (it is refused when a session loads), so only
-        // the uneven-channel handling is exercised here.
-        assert!(serde_json::from_value::<soundcraft_time::SampleRate>(json!(0)).is_err());
+        e.session_mut().sample_rate = serde_json::from_value(json!(0)).unwrap();
+        let r = check(&mut e);
+        assert!(r["active_audio_end_seconds"].is_null());
+        assert_eq!(r["issues"][0]["code"], "invalid_sample_rate");
     }
 }

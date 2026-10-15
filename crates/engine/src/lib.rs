@@ -5,12 +5,14 @@
 //! The engine owns the [`Session`] behind an `Arc` (copy-on-write), so undo snapshots are cheap.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod autosave;
 pub mod catalog;
 pub mod catalog_more;
 pub mod clip_group_file;
 pub mod cmd;
 pub mod demo;
 pub mod edit;
+pub mod file_access;
 mod group;
 pub mod inspect;
 pub mod io;
@@ -91,6 +93,18 @@ pub struct Clipboard {
     pub clip_effects: Vec<(String, f64)>,
     /// Markers inside the copied range (starts relative to it), for Paste Special › Merge Markers.
     pub markers: Vec<soundcraft_model::MemoryLocation>,
+    /// How far the copied range started after a grid line; Relative Grid pastes keep it.
+    pub grid_offset: Samples,
+    /// Copy Special › Automation: pasting it leaves the clips alone, in Shuffle mode too.
+    pub automation_only: bool,
+}
+
+impl Clipboard {
+    /// An empty clipboard for material copied from `range`.
+    pub fn of_range(s: &Session, range: soundcraft_time::Range) -> Clipboard {
+        let line = s.edit.grid.line_at_or_before(range.start, s.sample_rate, &s.tempo, s.frame_rate);
+        Clipboard { length: range.len(), grid_offset: range.start.saturating_sub(line), ..Clipboard::default() }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -126,8 +140,13 @@ pub struct Engine {
     merge_key: Option<String>,
     /// What `content_revision` last saw (spike P0-T06).
     content_seen: std::cell::RefCell<group::ContentSeen>,
+    /// The key every merged gesture takes while held (see `hold_merge`).
+    merge_hold: Option<String>,
     /// Messages for the UI status line / agents.
     pub messages: Vec<String>,
+    /// The edit selection (range, tracks) before the last change, for Restore Last Selection.
+    /// Kept out of the document so selecting never marks the session modified.
+    pub last_selection: Option<(soundcraft_time::Range, Vec<TrackId>)>,
 }
 
 impl Default for Engine {
@@ -158,7 +177,9 @@ impl Engine {
             dirty_at: Cell::new((0, false)),
             merge_key: None,
             content_seen: std::cell::RefCell::new(group::ContentSeen::new(seen)),
+            merge_hold: None,
             messages: Vec::new(),
+            last_selection: None,
         }
     }
 
@@ -192,6 +213,7 @@ impl Engine {
         self.saved = Arc::clone(&self.doc);
         self.undo.clear();
         self.redo.clear();
+        self.last_selection = None;
         self.revision = self.revision.wrapping_add(1);
         self.dirty = false;
     }
@@ -234,6 +256,7 @@ impl Engine {
     pub fn undo(&mut self) -> bool {
         let Some(h) = self.undo.pop() else { return false };
         let cur = std::mem::replace(&mut self.doc, h.doc);
+        self.keep_edit_mode(&cur);
         self.redo.push(HistoryEntry { label: h.label, doc: cur });
         self.revision = self.revision.wrapping_add(1);
         self.dirty = true;
@@ -243,10 +266,25 @@ impl Engine {
     pub fn redo(&mut self) -> bool {
         let Some(h) = self.redo.pop() else { return false };
         let cur = std::mem::replace(&mut self.doc, h.doc);
+        self.keep_edit_mode(&cur);
         self.undo.push(HistoryEntry { label: h.label, doc: cur });
         self.revision = self.revision.wrapping_add(1);
         self.dirty = true;
         true
+    }
+
+    /// Undo and Redo never change the Edit mode or its settings (Shuffle Lock above all).
+    fn keep_edit_mode(&mut self, from: &Session) {
+        use edit::{RELATIVE_GRID, SHUFFLE_LOCK, SNAP_TO_GRID};
+        let flags = [SNAP_TO_GRID, SHUFFLE_LOCK, RELATIVE_GRID];
+        let ed = &self.doc.edit;
+        if ed.edit_mode != from.edit.edit_mode || flags.iter().any(|f| ed.flag(f) != from.edit.flag(f)) {
+            let ed = &mut Arc::make_mut(&mut self.doc).edit;
+            ed.edit_mode = from.edit.edit_mode;
+            for f in flags {
+                ed.set_flag(f, from.edit.flag(f));
+            }
+        }
     }
 
     /// Record an undo point manually (for interactive gestures committed by the UI).
@@ -263,10 +301,19 @@ impl Engine {
         }
     }
 
+    /// Whether command `id` must wait for the take being recorded: nothing may replace the
+    /// session or quit under it.
+    pub fn blocked_while_recording(&self, id: &str) -> bool {
+        self.transport.recording && matches!(id, "session.new" | "session.open" | "session.close" | "session.revert" | "app.quit")
+    }
+
     /// Run a command by id. Never panics: escaped panics become `EngineError::Internal` and the
     /// document is restored.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
+        if self.blocked_while_recording(id) {
+            return Err(EngineError::Disabled(id.to_string(), "stop recording first".into()));
+        }
         if let Err(reason) = (spec.enabled)(self) {
             // A call that names its targets (tracks, clips, a range) does not need a selection;
             // the command itself validates them.
@@ -278,7 +325,6 @@ impl Engine {
         if spec.view {
             return self.execute_view(spec, params);
         }
-        self.merge_key = None;
         let before = Arc::clone(&self.doc);
         let rev = self.revision;
         let dirty = self.dirty;
@@ -292,6 +338,10 @@ impl Engine {
                 return Err(EngineError::Internal(id.to_string(), panic_message(&*p)));
             }
         };
+        if !Arc::ptr_eq(&before, &self.doc) {
+            // Only a change to the document ends a gesture, so Stop doesn't split the pass it ends.
+            self.merge_key = None;
+        }
         match result {
             Ok(v) => {
                 // A routing loop has no processing order. Refuse to create one (a file that already
@@ -306,6 +356,7 @@ impl Engine {
                     self.dirty = dirty;
                     return Err(EngineError::BadParams(id.to_string(), format!("this would route {} back into itself", names.join(" → "))));
                 }
+                cmd::remember_selection(self, &before);
                 if spec.undoable && !Arc::ptr_eq(&before, &self.doc) {
                     self.push_undo(spec.label, before);
                 }
@@ -374,7 +425,8 @@ impl Engine {
     /// Execute as part of a continuous gesture (fader drag, knob turn, slider): consecutive calls
     /// with the same `key` collapse into a single undo step.
     pub fn execute_merged(&mut self, id: &str, params: &Value, key: &str) -> Result<Value> {
-        let continuing = self.merge_key.as_deref() == Some(key);
+        let key = self.merge_hold.clone().unwrap_or_else(|| key.to_string());
+        let continuing = self.merge_key.as_ref() == Some(&key);
         let (before_len, before_pushes, limit) = (self.undo.len(), self.undo_pushes, self.history_limit);
         if continuing {
             // The step about to be pushed is dropped again below, so it must not evict the oldest
@@ -392,8 +444,16 @@ impl Engine {
             let excess = self.undo.len() - limit;
             self.undo.drain(..excess);
         }
-        self.merge_key = Some(key.to_string());
+        self.merge_key = Some(key);
         Ok(r)
+    }
+
+    /// While `key` is held, every `execute_merged` gesture takes it instead of its own, so they
+    /// all join one undo step (an automation pass and whatever is dragged during it).
+    pub fn hold_merge(&mut self, key: Option<&str>) {
+        if self.merge_hold.as_deref() != key {
+            self.merge_hold = key.map(str::to_string);
+        }
     }
 
     /// End a gesture started with `execute_merged`.
@@ -444,7 +504,7 @@ fn install_panic_hook() {
     ONCE.call_once(|| {
         let prev = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
-            log::error!("panic: {info}");
+            log::error!("panic: {info}\n{}", std::backtrace::Backtrace::force_capture());
             prev(info);
         }));
     });
@@ -548,6 +608,34 @@ mod merge_tests {
         assert_eq!(e.undo_history().len(), 2, "the cap still holds");
         e.undo();
         assert_eq!(e.session().track(t).unwrap().mixer.volume_db, -2.0);
+    }
+
+    #[test]
+    fn a_held_merge_joins_other_gestures_into_its_step() {
+        let mut e = Engine::default();
+        let t = e.session_mut().add_track(soundcraft_model::TrackKind::Audio, soundcraft_model::ChannelFormat::Mono, None);
+        e.hold_merge(Some("pass"));
+        for db in [-1.0, -2.0, -3.0] {
+            e.execute_merged("mix.volume", &json!({"track": t.0, "db": db}), "fader").unwrap();
+            e.execute_merged("mix.pan", &json!({"track": t.0, "pan": db / 4.0}), "pan").unwrap();
+        }
+        assert_eq!(e.undo_history().len(), 1);
+        e.hold_merge(None);
+        e.execute_merged("mix.volume", &json!({"track": t.0, "db": -6.0}), "fader").unwrap();
+        assert_eq!(e.undo_history().len(), 2);
+    }
+
+    #[test]
+    fn only_a_change_to_the_document_ends_a_gesture() {
+        let mut e = Engine::default();
+        let t = e.session_mut().add_track(soundcraft_model::TrackKind::Audio, soundcraft_model::ChannelFormat::Mono, None);
+        e.execute_merged("mix.volume", &json!({"track": t.0, "db": -1.0}), "fader").unwrap();
+        e.execute("transport.stop", &json!({})).unwrap();
+        e.execute_merged("mix.volume", &json!({"track": t.0, "db": -2.0}), "fader").unwrap();
+        assert_eq!(e.undo_history().len(), 1);
+        e.execute("mix.mute", &json!({"track": t.0})).unwrap();
+        e.execute_merged("mix.volume", &json!({"track": t.0, "db": -3.0}), "fader").unwrap();
+        assert_eq!(e.undo_history().len(), 3);
     }
 }
 

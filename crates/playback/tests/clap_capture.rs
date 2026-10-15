@@ -1,6 +1,6 @@
 //! State capture through the real `Player` and a real hosted CLAP plugin (the fixture gain built
-//! from `crates/clap-host/tests/fixture`): the audio thread hands the plugin over, this thread
-//! serialises it, and it goes back into its slot.
+//! from `crates/clap-host/tests/fixture`): the state is read on the calling thread through the
+//! handle the instance leaves behind, without involving the audio thread.
 
 use soundcraft_model::{ChannelFormat, Insert, Session, TrackKind};
 use soundcraft_playback::Player;
@@ -36,18 +36,17 @@ fn install_fixture() {
 }
 
 #[test]
-fn a_real_plugin_is_captured_off_the_audio_thread_and_returns_to_its_slot() {
+fn a_real_plugin_is_captured_without_involving_the_audio_thread() {
     install_fixture();
     let mut s = Session::default();
     let t = s.add_track(TrackKind::Audio, ChannelFormat::Mono, None);
     s.track_mut(t).expect("track").mixer.inserts[0] = Some(Insert::new("clap:org.soundcraft.test.gain"));
     let player = Player::new(Arc::new(s.clone()));
     player.update_session(Arc::new(s));
-    // Give the audio thread a moment to adopt the instance, then capture twice: the second proves
-    // the plugin was handed back (an empty answer would mean it was lost).
+    // Capture twice: the plugin is still live and gives the same state both times.
     let mut first = Vec::new();
     for _ in 0..50 {
-        first = player.capture_states().expect("capture");
+        first = player.capture_states();
         if !first.is_empty() {
             break;
         }
@@ -55,6 +54,6 @@ fn a_real_plugin_is_captured_off_the_audio_thread_and_returns_to_its_slot() {
     }
     assert_eq!(first.len(), 1, "the fixture has state");
     assert_eq!((first[0].0, first[0].1), (t, 0));
-    let second = player.capture_states().expect("capture again");
+    let second = player.capture_states();
     assert_eq!(second, first);
 }

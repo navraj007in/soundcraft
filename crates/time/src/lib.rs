@@ -19,6 +19,10 @@ pub use timecode::{FrameRate, Timecode};
 /// A position or length in samples.
 pub type Samples = i64;
 
+/// Largest position accepted from parameters and files: 2^40 samples (about 265 days at 48 kHz).
+/// Clamping there keeps every later addition and subtraction on positions far away from overflow.
+pub const MAX_POSITION: Samples = 1 << 40;
+
 /// Errors from parsing or converting time values.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum TimeError {
@@ -36,7 +40,6 @@ pub enum TimeError {
 
 /// Sample rates supported by sessions (Pro Tools offers 44.1 k – 192 k; we accept 8 k – 768 k).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[serde(try_from = "u32", into = "u32")]
 pub struct SampleRate(u32);
 
 impl TryFrom<u32> for SampleRate {
