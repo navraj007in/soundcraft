@@ -6,7 +6,7 @@
 //! 99.9th-percentile times with that budget, not the mean.
 
 use soundcraft_audio_io::AudioBuffer;
-use soundcraft_mix::{MixEngine, allow_realtime_parallel, mark_audio_thread};
+use soundcraft_mix::{MixEngine, RealtimeParallel, mark_audio_thread, set_realtime_parallel};
 use soundcraft_model::{ChannelFormat, Clip, Insert, Session, SourceAudio, SourceId, TrackKind};
 use std::sync::Arc;
 use std::time::Instant;
@@ -31,8 +31,8 @@ fn session(tracks: usize, frames: usize) -> Session {
     s
 }
 
-fn run(s: &Session, blocks: usize, block: usize, parallel: bool) -> Vec<f64> {
-    allow_realtime_parallel(parallel);
+fn run(s: &Session, blocks: usize, block: usize, mode: RealtimeParallel) -> Vec<f64> {
+    set_realtime_parallel(mode);
     mark_audio_thread();
     let mut m = MixEngine::new(48_000.0, block);
     let mut out = vec![vec![0.0f32; block]; 2];
@@ -53,13 +53,17 @@ fn main() {
     let (tracks, blocks, block) = (args.first().copied().unwrap_or(64), args.get(1).copied().unwrap_or(2000), args.get(2).copied().unwrap_or(512));
     let s = session(tracks, (blocks + 40) * block);
     let budget = block as f64 / 48.0;
-    for parallel in [false, true] {
-        let mut t = run(&s, blocks, block, parallel);
+    for mode in [RealtimeParallel::Off, RealtimeParallel::On, RealtimeParallel::Adaptive] {
+        let mut t = run(&s, blocks, block, mode);
         t.sort_by(f64::total_cmp);
         let pct = |p: f64| t.get(((t.len() as f64 * p) as usize).min(t.len().saturating_sub(1))).copied().unwrap_or(0.0);
         println!(
             "{tracks} tracks, {block}-frame blocks, {}: mean {:.2} ms, p99 {:.2}, p99.9 {:.2}, worst {:.2} (budget {budget:.1} ms)",
-            if parallel { "worker pool" } else { "serial     " },
+            match mode {
+                RealtimeParallel::Off => "serial     ",
+                RealtimeParallel::On => "worker pool",
+                RealtimeParallel::Adaptive => "adaptive   ",
+            },
             t.iter().sum::<f64>() / t.len().max(1) as f64,
             pct(0.99),
             pct(0.999),

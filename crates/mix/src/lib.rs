@@ -353,6 +353,8 @@ pub struct MixEngine {
     adopt: HashMap<(TrackId, usize), PreparedInstance>,
     /// Instances `sync` took out of service, for the host to drop (see [`MixEngine::take_retired`]).
     retired: Vec<Box<dyn Plugin>>,
+    /// Realtime serial/pool decision (see [`ParallelPolicy`]).
+    parallel: ParallelPolicy,
     /// Tracks implicitly soloed this block (reused buffer).
     implicit_solo: Vec<TrackId>,
     /// Ownership workspace reused for parallel strip processing.
@@ -414,6 +416,7 @@ impl MixEngine {
             latency: 0,
             track_latency: 0,
             implicit_solo: Vec::new(),
+            parallel: ParallelPolicy::new(),
             bus_latency: HashMap::new(),
             out_latency: HashMap::new(),
             input: Vec::new(),
@@ -653,6 +656,15 @@ impl MixEngine {
 
     /// Render `frames` (≤ max_block) samples starting at `pos` into `out` (≥ 2 channels).
     pub fn render(&mut self, s: &Session, pos: Samples, frames: usize, out: &mut [Vec<f32>]) {
+        let started = on_audio_thread().then(std::time::Instant::now);
+        self.render_block(s, pos, frames, out);
+        if let Some(t0) = started {
+            let budget = frames.min(self.max_block) as f64 / f64::from(self.sample_rate);
+            self.parallel.observe(t0.elapsed().as_secs_f64(), budget);
+        }
+    }
+
+    fn render_block(&mut self, s: &Session, pos: Samples, frames: usize, out: &mut [Vec<f32>]) {
         let frames = frames.min(self.max_block);
         if pos != self.last_end {
             // Seek: silence held notes and ringing plugins.
@@ -696,7 +708,9 @@ impl MixEngine {
         }
         let busses = std::mem::take(&mut self.busses);
         let live_in = LiveInput { input: &self.input, monitor_only: self.monitor_only, recording: self.recording };
-        run_strips(&mut work, |(i, st)| {
+        // Offline renders always parallelise; the audio callback follows the realtime policy.
+        let parallel = !on_audio_thread() || self.parallel.use_parallel(realtime_parallel());
+        run_strips(&mut work, parallel, |(i, st)| {
             if let Some(t) = s.tracks.get(*i) {
                 process_strip(s, t, st, &busses, &live_in, pos, frames, any_solo, &implicit_solo);
             }
@@ -1297,23 +1311,108 @@ fn as_audio_thread(audio: bool, f: impl FnOnce()) {
     f();
 }
 
-static REALTIME_PARALLEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Let the audio callback hand strips to the shared worker pool. Off by default: the pool has no
-/// deadline, its workers are ordinary threads that other work can occupy, and a callback that waits
-/// on them has no bound on how long a block takes. Offline renders always parallelise.
-pub fn allow_realtime_parallel(on: bool) {
-    REALTIME_PARALLEL.store(on, std::sync::atomic::Ordering::Relaxed);
+/// Whether the audio callback may hand strips to the shared worker pool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RealtimeParallel {
+    /// Always render serially on the callback thread.
+    Off,
+    /// Serial until the mix nears its time budget, then the pool; back to serial (for a cool-down)
+    /// when the pool starts missing deadlines. The default.
+    Adaptive,
+    /// Always use the pool (when there are enough strips).
+    On,
 }
 
-/// Process strips, in parallel on native targets when there are enough of them (and, on the audio
-/// thread, only when [`allow_realtime_parallel`] opted in).
+static REALTIME_PARALLEL: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1);
+
+/// Choose how the audio callback uses the shared worker pool. The pool is much faster on an idle
+/// machine but has no deadline: its workers are ordinary threads, and a callback waiting on one that
+/// the OS has descheduled takes as long as that takes. Offline renders always parallelise.
+pub fn set_realtime_parallel(mode: RealtimeParallel) {
+    let v = match mode {
+        RealtimeParallel::Off => 0,
+        RealtimeParallel::Adaptive => 1,
+        RealtimeParallel::On => 2,
+    };
+    REALTIME_PARALLEL.store(v, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The current choice (see [`set_realtime_parallel`]).
+pub fn realtime_parallel() -> RealtimeParallel {
+    match REALTIME_PARALLEL.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => RealtimeParallel::Off,
+        2 => RealtimeParallel::On,
+        _ => RealtimeParallel::Adaptive,
+    }
+}
+
+/// Decides, block by block, whether the callback renders serially or through the pool.
+///
+/// Each block's render time is compared with its budget (the block's duration). Serial rendering
+/// that sits above 60 % of the budget (or overruns repeatedly) switches to the pool; the pool is
+/// abandoned for a few seconds when it overruns repeatedly itself. Pure arithmetic on durations: no
+/// allocation, no locking.
+#[derive(Debug, Clone)]
+struct ParallelPolicy {
+    parallel: bool,
+    /// Smoothed render time as a fraction of the budget, in the current mode.
+    load: f64,
+    /// Decaying count of blocks that used more than 90 % of their budget.
+    overruns: f64,
+    /// Seconds of audio left before the pool may be tried again.
+    cooldown: f64,
+}
+
+impl ParallelPolicy {
+    const ENGAGE_LOAD: f64 = 0.6;
+    const OVERRUN_LOAD: f64 = 0.9;
+    const OVERRUN_LIMIT: f64 = 2.0;
+    const COOLDOWN_S: f64 = 4.0;
+
+    fn new() -> Self {
+        ParallelPolicy { parallel: false, load: 0.0, overruns: 0.0, cooldown: 0.0 }
+    }
+
+    /// Whether the next block should use the pool.
+    fn use_parallel(&self, mode: RealtimeParallel) -> bool {
+        match mode {
+            RealtimeParallel::Off => false,
+            RealtimeParallel::On => true,
+            RealtimeParallel::Adaptive => self.parallel,
+        }
+    }
+
+    /// Record one block that took `elapsed_s` of a `budget_s` budget.
+    fn observe(&mut self, elapsed_s: f64, budget_s: f64) {
+        if !(budget_s > 0.0 && elapsed_s.is_finite()) {
+            return;
+        }
+        let load = elapsed_s / budget_s;
+        self.load = self.load * 0.95 + load * 0.05;
+        self.overruns = self.overruns * 0.98 + f64::from(u8::from(load > Self::OVERRUN_LOAD));
+        self.cooldown = (self.cooldown - budget_s).max(0.0);
+        if self.parallel {
+            if self.overruns > Self::OVERRUN_LIMIT {
+                self.parallel = false;
+                self.cooldown = Self::COOLDOWN_S;
+                self.load = load;
+                self.overruns = 0.0;
+            }
+        } else if self.cooldown == 0.0 && (self.load > Self::ENGAGE_LOAD || self.overruns > Self::OVERRUN_LIMIT) {
+            self.parallel = true;
+            self.load = load;
+            self.overruns = 0.0;
+        }
+    }
+}
+
+/// Process strips, in parallel on native targets when `parallel` and there are enough of them.
 #[cfg(not(target_arch = "wasm32"))]
-fn run_strips<T: Send>(work: &mut [T], f: impl Fn(&mut T) + Sync + Send) {
+fn run_strips<T: Send>(work: &mut [T], parallel: bool, f: impl Fn(&mut T) + Sync + Send) {
     use rayon::prelude::*;
-    let audio = on_audio_thread();
-    if work.len() >= 4 && (!audio || REALTIME_PARALLEL.load(std::sync::atomic::Ordering::Relaxed)) {
+    if work.len() >= 4 && parallel {
         // The workers render on behalf of this thread: on the audio thread, they are it too.
+        let audio = on_audio_thread();
         work.par_iter_mut().for_each(|w| as_audio_thread(audio, || f(w)));
     } else {
         work.iter_mut().for_each(f);
@@ -1321,7 +1420,7 @@ fn run_strips<T: Send>(work: &mut [T], f: impl Fn(&mut T) + Sync + Send) {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn run_strips<T: Send>(work: &mut [T], f: impl Fn(&mut T) + Sync + Send) {
+fn run_strips<T: Send>(work: &mut [T], _parallel: bool, f: impl Fn(&mut T) + Sync + Send) {
     work.iter_mut().for_each(f);
 }
 
@@ -2207,7 +2306,7 @@ mod audio_thread_tests {
                 mark_audio_thread();
             }
             let mut work = vec![None; 64];
-            run_strips(&mut work, |w| {
+            run_strips(&mut work, true, |w| {
                 // Long enough that the pool's workers take part.
                 std::thread::sleep(std::time::Duration::from_millis(1));
                 *w = Some(on_audio_thread());
@@ -2216,6 +2315,56 @@ mod audio_thread_tests {
         })
         .join()
         .unwrap()
+    }
+
+    #[test]
+    fn the_policy_stays_serial_while_the_mix_is_cheap() {
+        let mut p = ParallelPolicy::new();
+        for _ in 0..10_000 {
+            p.observe(0.002, 0.0107); // ~19 % of the budget
+            assert!(!p.use_parallel(RealtimeParallel::Adaptive));
+        }
+    }
+
+    #[test]
+    fn the_policy_engages_the_pool_under_sustained_load_and_backs_off_when_it_overruns() {
+        let mut p = ParallelPolicy::new();
+        let budget = 0.0107;
+        for _ in 0..200 {
+            p.observe(0.8 * budget, budget);
+        }
+        assert!(p.use_parallel(RealtimeParallel::Adaptive), "80 % serial load switches to the pool");
+        // The pool starts missing deadlines: it is abandoned...
+        for _ in 0..10 {
+            p.observe(2.0 * budget, budget);
+        }
+        assert!(!p.use_parallel(RealtimeParallel::Adaptive), "repeated overruns return to serial");
+        // ...and not retried during the cool-down, however loaded serial looks.
+        for _ in 0..100 {
+            p.observe(0.8 * budget, budget);
+            assert!(!p.use_parallel(RealtimeParallel::Adaptive));
+        }
+        // After the cool-down it may try again.
+        for _ in 0..600 {
+            p.observe(0.8 * budget, budget);
+        }
+        assert!(p.use_parallel(RealtimeParallel::Adaptive));
+    }
+
+    #[test]
+    fn a_single_slow_block_does_not_flip_the_policy_and_the_modes_override_it() {
+        let mut p = ParallelPolicy::new();
+        for _ in 0..100 {
+            p.observe(0.002, 0.0107);
+        }
+        p.observe(0.05, 0.0107); // one hiccup
+        assert!(!p.use_parallel(RealtimeParallel::Adaptive));
+        assert!(p.use_parallel(RealtimeParallel::On));
+        let mut busy = ParallelPolicy::new();
+        for _ in 0..500 {
+            busy.observe(0.01, 0.0107);
+        }
+        assert!(!busy.use_parallel(RealtimeParallel::Off), "Off never uses the pool");
     }
 
     #[test]
