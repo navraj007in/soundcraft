@@ -983,17 +983,15 @@ fn track_header(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect, sele
     }
     // Name, highlighted when the track is selected, and the playlist menu beside it.
     let indent = folder_depth(app.engine.session(), track) as f32 * 10.0;
+    // The design sets the name as plain bold text, in the accent colour when the track is selected.
     let name_r = at(16.0 + indent, 1.5, 97.0 - indent, 15.0);
-    if selected {
-        ui.painter().rect_filled(name_r, 2.0, t.name_field_sel);
-    }
     let shown_name = if app.engine.session().edit.flag("edit_view.track_number") {
         let n = app.engine.session().track_index(id).map_or(0, |i| i + 1);
         format!("{n}  {}", track.name)
     } else {
         track.name.clone()
     };
-    let name_color = if selected { t.text_dark } else { t.text.lerp_to_gamma(t.text_dim, 0.4) };
+    let name_color = if selected { t.accent } else { t.text };
     ui.painter().with_clip_rect(name_r).text(pos2(name_r.min.x + 1.5, name_r.center().y), Align2::LEFT_CENTER, &shown_name, bold(12.5), name_color);
     let nresp = ui.interact(name_r, ui.id().with(("name", id.0)), Sense::click_and_drag());
     if nresp.double_clicked() {
@@ -1171,6 +1169,44 @@ fn track_header(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect, sele
                 });
             }
         }
+    }
+    // Pan knob, horizontal fader and its level: the design's primary mix controls, in the last row
+    // that is free at this height (below the voice and automation row at Medium, below the
+    // timebase and field row from Large up).
+    let fader_row = if (88.0..94.0).contains(&h) {
+        Some(74.0)
+    } else if h >= 112.0 {
+        Some(95.0)
+    } else {
+        None
+    };
+    if let Some(fy) = fader_row.filter(|_| !m.pan.is_empty() && !matches!(track.kind, TrackKind::Vca | TrackKind::Folder)) {
+        // At Medium the row stops above the strip that resizes the header (its bottom 4 points).
+        let rh = if fy < 80.0 { 10.0 } else { 14.0 };
+        let right = head.max.x - 12.0;
+        let mut fx = head.min.x + 17.0;
+        let kr = Rect::from_min_size(pos2(fx, head.min.y + fy), vec2(rh, rh));
+        let mut kc = ui.new_child(egui::UiBuilder::new().max_rect(kr));
+        let before = m.pan[0];
+        let mut v = before;
+        crate::widgets::pan_knob(&mut kc, rh, &mut v, "Pan (drag; double-click centres)");
+        if (v - before).abs() > f32::EPSILON {
+            let _ = app.engine.execute_merged("mix.pan", &json!({"track": id.0, "pan": v, "index": 0}), &format!("pan:{}:0", id.0));
+        }
+        fx += rh + 4.0;
+        let value_w = 34.0;
+        let fr = Rect::from_min_max(pos2(fx, head.min.y + fy), pos2(right - value_w, head.min.y + fy + rh));
+        if let Some(db) = crate::widgets::hfader(ui, fr, m.volume_db, ui.id().with(("hfader", id.0))) {
+            app.gesture = Some(crate::Gesture::Fader { track: id, start_db: m.volume_db });
+            let _ = app.engine.execute_merged("mix.volume", &json!({"track": id.0, "db": db}), &format!("fader:{}", id.0));
+        }
+        ui.painter().text(
+            pos2(right, head.min.y + fy + rh / 2.0),
+            Align2::RIGHT_CENTER,
+            crate::widgets::db_text(m.volume_db),
+            crate::theme::mono(10.0),
+            t.text,
+        );
     }
     let md = app.meters.get(&id).copied().unwrap_or_default();
     header_meter(ui, Rect::from_min_max(pos2(head.max.x - 8.0, head.min.y + 1.0), pos2(head.max.x, head.max.y - 1.5)), &md, track.channels() >= 2);
