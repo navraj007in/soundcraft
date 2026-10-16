@@ -496,6 +496,11 @@ impl MixEngine {
     /// Takes instances created off the audio thread; the next render's `sync` places them.
     /// An earlier instance waiting for the same slot is retired.
     pub fn adopt(&mut self, instances: Vec<PreparedInstance>) {
+        // Nothing new for any slot: leave the sync state alone. A session update with no new
+        // plugins (every fader, pan or mute edit) must not force a full re-sync, which allocates.
+        if instances.is_empty() {
+            return;
+        }
         for p in instances {
             if let Some(old) = self.adopt.insert((p.track, p.slot), p) {
                 self.retired.push(old.plugin);
@@ -1681,6 +1686,10 @@ fn implicit_solo_set(s: &Session, any_solo: bool, out: &mut Vec<TrackId>) {
     out.clear();
     if !any_solo {
         return;
+    }
+    // Soloing a VCA solos the tracks it controls.
+    for vca in s.tracks.iter().filter(|v| v.kind == TrackKind::Vca && v.mixer.solo && !v.inactive) {
+        out.extend(s.tracks.iter().filter(|t| t.mixer.vca == Some(vca.id.0) && !t.inactive).map(|t| t.id));
     }
     let feeds = |o: &Track, b: BusId| o.mixer.output == Route::Bus(b) || o.mixer.sends.iter().flatten().any(|sn| sn.target == Route::Bus(b));
     let mut grew = true;
@@ -2933,6 +2942,45 @@ mod tests {
         let order: Vec<TrackId> = processing_order(&s).into_iter().filter_map(|i| s.tracks.get(i)).map(|t| t.id).collect();
         let pos = |t| order.iter().position(|&o| o == t).unwrap();
         assert!(pos(x) < pos(sink) && pos(y) < pos(sink));
+    }
+
+    #[test]
+    fn a_session_update_with_no_new_plugins_does_not_force_a_resync() {
+        let (s, _) = impulse_session();
+        let mut m = MixEngine::new(48000., 512);
+        let mut out = vec![vec![0.; 512]; 2];
+        m.render(&s, 0, 512, &mut out);
+        let synced = m.synced;
+        assert_ne!(synced, (usize::MAX, usize::MAX, usize::MAX));
+        m.adopt(Vec::new());
+        assert_eq!(m.synced, synced, "an edit with nothing to adopt keeps the sync state");
+        // A new instance still asks for one.
+        m.adopt(vec![PreparedInstance {
+            track: s.tracks[0].id,
+            slot: 0,
+            id: "clap:x".into(),
+            ch: 1,
+            plugin: soundcraft_dsp::create("gain").unwrap(),
+        }]);
+        assert_eq!(m.synced, (usize::MAX, usize::MAX, usize::MAX));
+    }
+
+    #[test]
+    fn soloing_a_vca_solos_the_tracks_it_controls_and_silences_the_rest() {
+        let mut s = Session::default();
+        s.pool.insert(SourceId(300), Arc::new(SourceAudio::new(AudioBuffer { sample_rate: 48000, channels: vec![vec![0.4; 2048]] })));
+        let (member, other) = (s.add_track(TrackKind::Audio, ChannelFormat::Mono, None), s.add_track(TrackKind::Audio, ChannelFormat::Mono, None));
+        for (k, t) in [member, other].into_iter().enumerate() {
+            s.track_mut(t).unwrap().playlist_mut().unwrap().clips.push(Clip::audio(ClipId(310 + k as u64), "dc", SourceId(300), 0, 0, 2048));
+        }
+        let vca = s.add_track(TrackKind::Vca, ChannelFormat::Mono, None);
+        s.track_mut(member).unwrap().mixer.vca = Some(vca.0);
+        let peak = |s: &Session| render_range(s, Range::new(0, 2048), 512)[0].iter().fold(0.0f32, |m, x| m.max(x.abs()));
+        let both = peak(&s);
+        s.track_mut(vca).unwrap().mixer.solo = true;
+        let soloed = peak(&s);
+        assert!(soloed > 0.1, "the VCA's member plays: {soloed}");
+        assert!(soloed < both * 0.75, "the track outside the VCA is silenced: {soloed} vs {both}");
     }
 
     #[test]

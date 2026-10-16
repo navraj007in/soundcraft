@@ -302,23 +302,29 @@ pub fn annexb_nals(data: &[u8]) -> Vec<&[u8]> {
     out
 }
 
+/// Whether `len` bytes starting at `at` fit in a buffer of `total` bytes, without the addition that
+/// wraps on 32-bit targets (a NAL length of 0xFFFF_FFFF would otherwise slip past the check).
+fn fits(total: usize, at: usize, len: usize) -> bool {
+    at <= total && len <= total - at
+}
+
 /// Split a length-prefixed sample (AVCC/HVCC, `length_size` 1/2/4 bytes) into NAL units.
 pub fn length_prefixed_nals(data: &[u8], length_size: usize) -> Result<Vec<&[u8]>> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < data.len() {
-        if i + length_size > data.len() {
+        if !fits(data.len(), i, length_size) {
             return Err(BitError::Eof);
         }
         let mut len = 0usize;
         for k in 0..length_size {
-            len = (len << 8) | data[i + k] as usize;
+            len = (len << 8) | usize::from(data.get(i + k).copied().ok_or(BitError::Eof)?);
         }
         i += length_size;
-        if i + len > data.len() {
+        if !fits(data.len(), i, len) {
             return Err(BitError::Eof);
         }
-        out.push(&data[i..i + len]);
+        out.push(data.get(i..i + len).ok_or(BitError::Eof)?);
         i += len;
     }
     Ok(out)
@@ -338,6 +344,20 @@ pub fn crc32(data: &[u8]) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_huge_nal_length_is_an_error_whatever_the_pointer_width() {
+        // The wrap that mattered happens at 32 bits; `fits` is written so no width can overflow.
+        assert!(!super::fits(10, 4, usize::MAX));
+        assert!(!super::fits(10, 4, 7));
+        assert!(super::fits(10, 4, 6));
+        assert!(!super::fits(10, 11, 0), "a start past the end never fits");
+        let sample = [0xFF, 0xFF, 0xFF, 0xFF, 1, 2, 3];
+        assert!(super::length_prefixed_nals(&sample, 4).is_err());
+        let good = [0, 0, 0, 2, 9, 8, 0, 0, 0, 1, 7];
+        assert_eq!(super::length_prefixed_nals(&good, 4).unwrap(), vec![&[9u8, 8][..], &[7u8][..]]);
+        assert!(super::length_prefixed_nals(&[0, 0], 4).is_err(), "a truncated length");
+    }
+
     use super::*;
     use proptest::prelude::*;
 

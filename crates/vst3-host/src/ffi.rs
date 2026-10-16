@@ -1240,17 +1240,6 @@ impl Instance {
         v.is_finite().then_some(v)
     }
 
-    /// Plain → normalized, clamped to 0..1.
-    pub fn to_normalized(&self, id: u32, plain: f64) -> Option<f64> {
-        let c = self.controller.as_ref()?;
-        if !plain.is_finite() {
-            return None;
-        }
-        // SAFETY: valid controller.
-        let v = unsafe { c.plainParamToNormalized(id, plain) };
-        v.is_finite().then(|| v.clamp(0.0, 1.0))
-    }
-
     pub fn normalized_value(&self, id: u32) -> Option<f64> {
         let c = self.controller.as_ref()?;
         // SAFETY: valid controller.

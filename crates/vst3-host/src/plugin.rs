@@ -13,6 +13,39 @@ const MAX_CHANNELS: usize = 64;
 /// An `unsynced` slot with no value waiting (a NaN pattern, which `set_param` never stores).
 const SYNCED: u64 = u64::MAX;
 
+/// Points sampled across a parameter's normalized range.
+const CURVE_STEPS: usize = 1024;
+
+/// A parameter's plain → normalized conversion, sampled once when the plugin is created (on the main
+/// thread) so that `set_param`, which may run on the audio thread, never has to ask the plug-in's
+/// edit controller: its methods are not safe to call from two threads at once.
+struct PlainCurve {
+    /// The plain value at normalized `k / CURVE_STEPS`, strictly monotonic.
+    plain: Box<[f32]>,
+}
+
+impl PlainCurve {
+    /// Sample `to_plain` over 0..=1. `None` unless every sample is finite and the curve is strictly
+    /// monotonic (so it can be inverted).
+    fn sample(mut to_plain: impl FnMut(f64) -> Option<f64>) -> Option<PlainCurve> {
+        let plain: Vec<f32> =
+            (0..=CURVE_STEPS).map(|k| to_plain(k as f64 / CURVE_STEPS as f64).filter(|v| v.is_finite()).map(|v| v as f32)).collect::<Option<_>>()?;
+        let (first, last) = (*plain.first()?, *plain.last()?);
+        let up = last > first;
+        plain.windows(2).all(|w| if up { w[1] > w[0] } else { w[1] < w[0] }).then(|| PlainCurve { plain: plain.into_boxed_slice() })
+    }
+
+    /// The normalized value for `v` (clamped to the sampled range), interpolating between samples.
+    fn normalized(&self, v: f32) -> Option<f64> {
+        let up = self.plain.last()? > self.plain.first()?;
+        let k = self.plain.partition_point(|&p| if up { p < v } else { p > v });
+        let (lo, hi) = (k.saturating_sub(1), k.min(self.plain.len().saturating_sub(1)));
+        let (a, b) = (f64::from(*self.plain.get(lo)?), f64::from(*self.plain.get(hi)?));
+        let t = if (b - a).abs() > 0.0 { ((f64::from(v) - a) / (b - a)).clamp(0.0, 1.0) } else { 0.0 };
+        Some((lo as f64 + t * (hi - lo) as f64) / CURVE_STEPS as f64)
+    }
+}
+
 /// How a SoundCraft parameter value maps to the VST3 normalized value.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Mapping {
@@ -32,6 +65,8 @@ pub struct Vst3Plugin {
     /// VST3 id of each `info.params` entry (same order).
     ids: Vec<u32>,
     maps: Vec<Mapping>,
+    /// For `Mapping::Plain` parameters: the sampled plain → normalized curve (see [`PlainCurve`]).
+    curves: Vec<Option<PlainCurve>>,
     values: Vec<f32>,
     /// Normalized values waiting for the next block (coalesced per id; bounded).
     pending: Vec<(u32, f64)>,
@@ -83,6 +118,8 @@ impl Vst3Plugin {
                 }
             })
             .collect();
+        let curves: Vec<Option<PlainCurve>> =
+            maps.iter().zip(&ids).map(|(m, &id)| if *m == Mapping::Plain { PlainCurve::sample(|n| inst.to_plain(id, n)) } else { None }).collect();
         let mut p = Vst3Plugin {
             info,
             values: Vec::with_capacity(ids.len()),
@@ -105,6 +142,7 @@ impl Vst3Plugin {
             transport: None,
             ids,
             maps,
+            curves,
             inst,
         };
         let values: Vec<f32> = (0..p.ids.len())
@@ -130,13 +168,13 @@ impl Vst3Plugin {
 
     fn normalized_from_plain(&self, i: usize, v: f32) -> Option<f64> {
         let pi = self.info.params.get(i)?;
-        let id = *self.ids.get(i)?;
         let span = f64::from(pi.max - pi.min);
         let linear = if span > 0.0 { (f64::from(v) - f64::from(pi.min)) / span } else { 0.0 };
         let n = match self.maps.get(i)? {
             Mapping::Stepped(steps) if *steps > 0.0 => f64::from(v) / steps,
             Mapping::Stepped(_) => 0.0,
-            Mapping::Plain => self.inst.to_normalized(id, f64::from(v)).unwrap_or(linear),
+            // From the sampled curve, never the controller: this runs on the audio thread.
+            Mapping::Plain => self.curves.get(i).and_then(Option::as_ref).and_then(|c| c.normalized(v)).unwrap_or(linear),
             Mapping::Linear => linear,
         };
         n.is_finite().then(|| n.clamp(0.0, 1.0))
@@ -486,5 +524,33 @@ impl PluginEditor for Vst3Editor {
         if let (Some(&vid), Some(n)) = (self.ids.get(i), self.normalized(i, value)) {
             self.link.set_normalized(vid, n);
         }
+    }
+}
+
+#[cfg(test)]
+mod curve_tests {
+    use super::*;
+
+    #[test]
+    fn a_sampled_log_curve_inverts_accurately() {
+        // 20 Hz to 20 kHz, the usual frequency law.
+        let c = PlainCurve::sample(|n| Some(20.0 * 1000f64.powf(n))).expect("monotonic");
+        for n in [0.0, 0.001, 0.25, 0.5, 0.731, 0.999, 1.0] {
+            let plain = (20.0 * 1000f64.powf(n)) as f32;
+            let got = c.normalized(plain).expect("in range");
+            assert!((got - n).abs() < 1e-3, "n={n}: got {got}");
+        }
+        assert_eq!(c.normalized(1.0), Some(0.0), "below the range clamps to the bottom");
+        assert_eq!(c.normalized(1e9), Some(1.0), "above it clamps to the top");
+    }
+
+    #[test]
+    fn decreasing_curves_work_and_unusable_ones_are_refused() {
+        let down = PlainCurve::sample(|n| Some(12.0 - 36.0 * n)).expect("monotonic");
+        assert!((down.normalized(-6.0).expect("in range") - 0.5).abs() < 1e-6);
+        assert!(PlainCurve::sample(|n| Some((n * 6.0).sin())).is_none(), "not monotonic");
+        assert!(PlainCurve::sample(|n| if n > 0.5 { None } else { Some(n) }).is_none(), "the controller gave no value");
+        assert!(PlainCurve::sample(|_| Some(f64::NAN)).is_none());
+        assert!(PlainCurve::sample(|_| Some(3.0)).is_none(), "flat");
     }
 }

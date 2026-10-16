@@ -38,8 +38,8 @@ People trust SoundCraft with their recordings; a crash loses takes. **This outra
 ## Architecture (layers enforced by `cargo xtask layers`)
 | Layer | Crate | Role |
 |---|---|---|
-| L0 | `soundcraft-time`, `soundcraft-audio-io`, `soundcraft-midi`, `soundcraft-rt-pool` | Timebases/tempo/grid; audio file formats + peaks; Standard MIDI Files + MIDI ops; the audio callback's worker pool |
-| L1 | `soundcraft-dsp` | Plugins (EQ, dynamics, reverb, delay, modulation, harmonic, pitch, utility, instruments), offline processing, meters, FFT |
+| L0 | `soundcraft-time`, `soundcraft-audio-io`, `soundcraft-midi`, `soundcraft-video`, `soundcraft-assist-policy`, `soundcraft-rt-pool` | Timebases/tempo/grid; audio file formats + peaks; Standard MIDI Files + MIDI ops; video decoders and demuxer; the assistant's production-rule evaluator; the audio callback's worker pool |
+| L1 | `soundcraft-dsp`, `soundcraft-pitch-eval`, `soundcraft-clap-host`, `soundcraft-vst3-host`, `soundcraft-au-host` | Plugins (EQ, dynamics, reverb, delay, modulation, harmonic, pitch, utility, instruments), offline processing, meters, FFT; the pitch-tracker benchmark; the CLAP, VST3 and Audio Unit hosts |
 | L2 | `soundcraft-model` | The session document (tracks, playlists, clips, mixer, routing, automation, markers, groups) |
 | L3 | `soundcraft-mix` | Mix engine shared by realtime playback and offline bounce |
 | L4 | `soundcraft-engine`, `soundcraft-playback` | Command registry, undo, editing, import/export/bounce, parity catalog; audio device I/O (cpal) |

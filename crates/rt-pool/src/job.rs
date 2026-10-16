@@ -152,13 +152,31 @@ impl Job {
         self.remaining.store(len, Ordering::Relaxed);
         let generation = unpack(self.cursor.load(Ordering::Relaxed)).0 + 1;
         self.cursor.store(pack(generation, len, 0), Ordering::Release);
+        // From here workers may touch `items` and `f`; the guard makes sure none still does when this
+        // frame ends, even by unwinding (a panicking `wake`).
+        let mut guard = Finish { job: self, done: false };
         wake();
         while let Some(claim) = self.claim() {
             self.execute(claim);
         }
+        let panicked = guard.finish();
+        if panicked { Err(RunError::Panicked) } else { Ok(()) }
+    }
+}
+
+/// Ends a batch: nobody may use its borrowed data once this has run.
+struct Finish<'a> {
+    job: &'a Job,
+    done: bool,
+}
+
+impl Finish<'_> {
+    /// Wait for the items workers are still running, free the pool for the next batch, and say
+    /// whether any item panicked.
+    fn finish(&mut self) -> bool {
         // Items still running on workers: wait for them. Spin briefly, then yield the core.
         let mut spins = 0u32;
-        while self.remaining.load(Ordering::Acquire) != 0 {
+        while self.job.remaining.load(Ordering::Acquire) != 0 {
             spins = spins.saturating_add(1);
             if spins < 2_000 {
                 std::hint::spin_loop();
@@ -166,14 +184,80 @@ impl Job {
                 std::thread::yield_now();
             }
         }
-        let panicked = self.panicked.load(Ordering::Relaxed);
-        self.busy.store(false, Ordering::Release);
-        if panicked { Err(RunError::Panicked) } else { Ok(()) }
+        let panicked = self.job.panicked.load(Ordering::Relaxed);
+        self.job.busy.store(false, Ordering::Release);
+        self.done = true;
+        panicked
+    }
+}
+
+impl Drop for Finish<'_> {
+    /// Only reached before `finish` when the caller is unwinding: abandon the items nobody has
+    /// claimed (counting them off so the wait ends), then wait for the ones in flight.
+    fn drop(&mut self) {
+        if !self.done {
+            while self.job.claim().is_some() {
+                self.job.remaining.fetch_sub(1, Ordering::Release);
+            }
+            self.job.panicked.store(true, Ordering::Relaxed);
+            self.finish();
+        }
     }
 }
 
 impl Default for Job {
     fn default() -> Self {
         Job::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+
+    /// Helper threads that claim and run items, as pool workers do.
+    fn workers(job: &Arc<Job>, n: usize, stop: &Arc<AtomicBool>) -> Vec<std::thread::JoinHandle<()>> {
+        (0..n)
+            .map(|_| {
+                let (job, stop) = (Arc::clone(job), Arc::clone(stop));
+                std::thread::spawn(move || {
+                    while !stop.load(Ordering::Acquire) {
+                        match job.claim() {
+                            Some(c) => job.execute(c),
+                            None => std::hint::spin_loop(),
+                        }
+                    }
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_panic_while_waking_workers_leaves_nothing_using_the_callers_data() {
+        let job = Arc::new(Job::new());
+        let stop = Arc::new(AtomicBool::new(false));
+        let handles = workers(&job, 3, &stop);
+        let touched = AtomicUsize::new(0);
+        {
+            // These live only inside this block: if a worker used them afterwards, Miri would say so.
+            let mut items = vec![0u64; 200];
+            let f = |x: &mut u64| {
+                *x += 1;
+                touched.fetch_add(1, Ordering::Relaxed);
+                std::thread::sleep(std::time::Duration::from_micros(50));
+            };
+            let r = catch_unwind(AssertUnwindSafe(|| job.run(&mut items, &f, || std::panic::resume_unwind(Box::new("wake failed")))));
+            assert!(r.is_err(), "the panic propagates to the caller");
+        }
+        // The pool is free again and works.
+        let mut again = vec![0u8; 16];
+        assert_eq!(job.run(&mut again, &|x| *x = 9, || {}), Ok(()));
+        assert!(again.iter().all(|&x| x == 9));
+        stop.store(true, Ordering::Release);
+        for h in handles {
+            h.join().unwrap();
+        }
     }
 }

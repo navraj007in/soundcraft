@@ -28,3 +28,20 @@ Merged with upstream 0.7.0 on 15 October 2026: where upstream fixed the same def
 Open: real-device dropout measurement, companion
 token handling for the control channel (P1-E03), the web shell's direct session edits and the
 `processing_order` depth heuristic.
+
+## Second audit (16 October 2026)
+
+A second review of the merged tree listed 25 findings (F-01 to F-25). Checked against the code on
+16 October: F-05, F-02, F-04, F-06 and F-03 were confirmed and fixed; F-11 and F-12 were wrong
+(`same_document` compares the edit flags and values, and `execute` already skips the selection check
+when a call names its targets); F-01's provenance claim was overstated; F-07 is a design question;
+F-08 is fixed upstream in PR #573 (open); the rest are open.
+
+| ID | Fix | Regression test |
+|---|---|---|
+| F-05 | `MixEngine::adopt` returns early when there is nothing to adopt, so a fader edit no longer forces a full re-sync on the audio thread | `a_session_update_with_no_new_plugins_does_not_force_a_resync` (mix) |
+| F-02 | `length_prefixed_nals` checks lengths by subtraction, so a 32-bit wrap cannot slip through | `a_huge_nal_length_is_an_error_whatever_the_pointer_width` (video) |
+| F-06 | Soloing a VCA solos the tracks it controls | `soloing_a_vca_solos_the_tracks_it_controls_and_silences_the_rest` (mix) |
+| F-04 | VST3 `set_param` reads a plain-to-normalized curve sampled at creation instead of calling the controller from the audio thread | `curve_tests` (vst3-host). CLAP and AU hosts not yet reviewed for the same race |
+| F-03 | `Job::run` ends the batch in a drop guard, so an unwinding `wake` cannot leave a worker using freed stack | `a_panic_while_waking_workers_leaves_nothing_using_the_callers_data` (rt-pool), also run under Miri |
+| F-25 | `AGENTS.md` layer table lists every crate | n/a |
