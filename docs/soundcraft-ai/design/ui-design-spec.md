@@ -1,6 +1,6 @@
 # UI design specification (digest of the Claude Design bundle)
 
-**Version:** 0.3 · **Date:** 15 October 2026 · **Status:** Rounds 1 to 6 received, the eight requested fixes checked; **not yet implemented.**
+**Version:** 0.3 · **Date:** 15 October 2026 · **Status:** Rounds 1 to 6 received, the eight requested fixes checked. **Implemented so far (16 October 2026):** the Graphite palette, IBM Plex fonts, OKLCH clip colours and icon set, and in the track header the plain accent-coloured name and the pan knob, horizontal fader and level readout (on top of upstream's header, which keeps its extra controls). **Not implemented:** the vocal inspector (3a), assistant panel (3b) and change review (3c), and the rest of the Arrange window redlines.
 **Source:** the Claude Design bundle "Arrange Window Design Round 1" (rounds 1 to 6; the second download, with `v2` pages that supersede the originals), made from [ui-design-brief.md](../ui-design-brief.md) and [round-6-brief.md](round-6-brief.md).
 **Decisions that override the bundle:** [decisions.md](decisions.md).
 **Machine-readable:** [tokens.json](tokens.json) (colours, type, sizes, palette, redlines, hit areas, fader law), [copy.json](copy.json) (interaction notes and exact wording), [icons.json](icons.json) (63 icons as path data) and [messages.json](messages.json) (the 15 messages from board 6b). Both are generated from the bundle as data by `tools/design/extract_design.py`; nothing in the bundle is executed.
