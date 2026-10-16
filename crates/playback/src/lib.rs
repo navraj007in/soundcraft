@@ -41,6 +41,8 @@ const BLOCK: usize = 512;
 
 /// Room for replaced snapshots on their way back; `update_session` empties it before each send.
 const OLD_SESSIONS: usize = 16;
+/// Most replaced snapshots the callback holds while the UI thread catches up.
+const HELD_SESSIONS: usize = 256;
 
 /// The realtime audio thread marker lives in the mix engine, which carries it into the strips it
 /// renders on worker threads; the cpal callbacks here set it.
@@ -178,6 +180,9 @@ struct AudioState {
     /// Retired plugin instances go back to the UI thread to be dropped there.
     garbage: Sender<Vec<Box<dyn Plugin>>>,
     old_sessions: Option<SyncSender<Arc<Session>>>,
+    /// Replaced snapshots the UI thread has not taken yet (its channel was full): kept, never dropped
+    /// here, because freeing one takes thousands of frees. Capacity is reserved up front.
+    held_sessions: Vec<Arc<Session>>,
     /// MIDI device messages (see [`midi_io`]).
     midi: Option<Arc<midi_io::MidiShared>>,
     /// Where MIDI tracks routed to hardware ports and the Thru ports get their messages.
@@ -198,6 +203,7 @@ impl AudioState {
         AudioState {
             garbage,
             old_sessions: None,
+            held_sessions: Vec::with_capacity(HELD_SESSIONS),
             midi: None,
             midi_out: None,
             fold: fold_gains(&session),
@@ -240,8 +246,10 @@ impl AudioState {
                     }
                     self.fold = fold_gains(&s);
                     let old = std::mem::replace(&mut self.session, s);
-                    if let Some(tx) = &self.old_sessions {
-                        let _ = tx.try_send(old);
+                    // Kept for the UI thread to free (see `flush_old_sessions`). Only past the reserved
+                    // room would one be dropped here, which needs hundreds of edits between two UI frames.
+                    if self.held_sessions.len() < HELD_SESSIONS {
+                        self.held_sessions.push(old);
                     }
                 }
                 Cmd::OldSessions(tx) => self.old_sessions = Some(tx),
@@ -287,8 +295,20 @@ impl AudioState {
             // `sync` creates no third-party plugins here.
             self.mix.ensure_synced(&self.session);
         }
+        self.flush_old_sessions();
         self.send_garbage();
         self.shared.playing.store(self.playing, Ordering::Relaxed);
+    }
+
+    /// Pass replaced snapshots to the UI thread as its channel has room; what does not fit stays held.
+    fn flush_old_sessions(&mut self) {
+        let Some(tx) = &self.old_sessions else { return };
+        while let Some(old) = self.held_sessions.pop() {
+            if let Err(std::sync::mpsc::TrySendError::Full(old) | std::sync::mpsc::TrySendError::Disconnected(old)) = tx.try_send(old) {
+                self.held_sessions.push(old);
+                break;
+            }
+        }
     }
 
     /// Hand what MIDI tracks routed to hardware ports produced (or released) to the output thread,
@@ -1581,6 +1601,38 @@ mod tests {
             st.fill(&mut out, 2);
             let replaced = watched.len().checked_sub(2).and_then(|i| watched.get(i));
             assert!(replaced.is_none_or(|w| w.strong_count() == 1), "freed on the audio thread");
+        }
+        side.collect_garbage();
+        assert_eq!(watched.iter().filter(|w| w.strong_count() > 0).count(), 1, "only the live snapshot is left");
+    }
+
+    #[test]
+    fn a_burst_of_replaced_sessions_is_held_not_freed_on_the_audio_thread() {
+        let shared = Arc::new(Shared {
+            position: AtomicI64::new(0),
+            playing: AtomicBool::new(false),
+            speed: AtomicU32::new(1000),
+            meters: Mutex::new(MeterSnapshot::default()),
+        });
+        let (tx, rx) = channel();
+        let (gtx, grx) = channel();
+        let mut st = AudioState::new(rx, shared, Arc::new(soundcraft_model::Session::default()), 48_000.0, gtx);
+        let mut side = Side::new(48_000.0, grx);
+        side.return_old_sessions(&tx);
+        let mut out = vec![0.0f32; 256];
+        let mut watched = Vec::new();
+        // Far more updates than the channel holds, with the UI thread collecting nothing meanwhile.
+        for _ in 0..8 * OLD_SESSIONS {
+            let s = Arc::new(soundcraft_model::Session::default());
+            watched.push(Arc::downgrade(&s));
+            tx.send(Cmd::Session(s, Vec::new())).unwrap();
+            st.fill(&mut out, 2);
+        }
+        assert!(watched.iter().all(|w| w.strong_count() >= 1), "none was dropped on the audio thread");
+        // Once the UI thread collects, they all drain through and only the live one remains.
+        for _ in 0..16 {
+            side.collect_garbage();
+            st.fill(&mut out, 2);
         }
         side.collect_garbage();
         assert_eq!(watched.iter().filter(|w| w.strong_count() > 0).count(), 1, "only the live snapshot is left");

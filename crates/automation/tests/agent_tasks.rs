@@ -171,3 +171,43 @@ fn batch_rejects_non_array_calls() {
     assert!(text.contains("`calls` must be an array"), "{text}");
     assert_eq!(session(&mut s)["tracks"].as_array().unwrap().len(), 0);
 }
+
+fn serve_text(input: &str, max_line: usize) -> Vec<Value> {
+    let mut s = Server::new(Headless::new(Engine::default()));
+    let mut out = Vec::new();
+    s.serve_bounded(input.as_bytes(), &mut out, max_line).unwrap();
+    String::from_utf8(out).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect()
+}
+
+#[test]
+fn an_empty_batch_is_one_invalid_request_error() {
+    let replies = serve_text("[]\n", 1 << 20);
+    assert_eq!(replies.len(), 1);
+    assert_eq!(replies[0]["error"]["code"], -32600);
+    assert!(replies[0]["id"].is_null());
+}
+
+#[test]
+fn a_line_over_the_limit_is_refused_and_ends_the_session_without_buffering_it() {
+    let long =
+        format!("{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"{}\"}}\n{{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}}\n", "x".repeat(5000));
+    let replies = serve_text(&long, 1024);
+    assert_eq!(replies.len(), 1, "the oversize line ended the session: {replies:?}");
+    assert_eq!(replies[0]["error"]["code"], -32600);
+    // A line exactly at the limit, and the ones after it, are fine.
+    let ok = "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"ping\"}\n";
+    let replies = serve_text(&format!("{ok}{ok}"), ok.len());
+    assert_eq!(replies.len(), 2);
+}
+
+#[test]
+fn the_line_reader_stops_at_the_limit() {
+    let mut input: &[u8] = &[b'x'; 100];
+    let e = soundcraft_automation::read_line_bounded(&mut input, 10).unwrap_err();
+    assert_eq!(e.kind(), std::io::ErrorKind::InvalidData);
+    assert_eq!(input.len(), 100 - 11, "only limit + 1 bytes were taken");
+    let mut input: &[u8] = b"abc\r\ndef";
+    assert_eq!(soundcraft_automation::read_line_bounded(&mut input, 10).unwrap().as_deref(), Some("abc"));
+    assert_eq!(soundcraft_automation::read_line_bounded(&mut input, 10).unwrap().as_deref(), Some("def"), "a last line without a newline");
+    assert_eq!(soundcraft_automation::read_line_bounded(&mut input, 10).unwrap(), None);
+}

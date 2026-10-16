@@ -12,10 +12,34 @@ pub mod mcp;
 use serde_json::{Value, json};
 use soundcraft_engine::Engine;
 use soundcraft_engine::file_access::{self, AutomationRoots};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::sync::Arc;
 use std::time::Duration;
+
+/// Longest line either side of the control protocol or MCP will read (bytes): room for the largest
+/// plugin state a command carries (about 85 MiB as base64) plus the JSON around it.
+pub const MAX_LINE: usize = 96 << 20;
+
+/// Read one `\n`-terminated line of at most `max` bytes (the newline and a `\r` stripped).
+/// `Ok(None)` at end of input; an `InvalidData` error when the line is longer, without reading the
+/// rest of it, so a peer cannot make this buffer more than `max + 1` bytes.
+pub fn read_line_bounded(reader: &mut impl BufRead, max: usize) -> std::io::Result<Option<String>> {
+    let mut buf = Vec::new();
+    let limit = u64::try_from(max).unwrap_or(u64::MAX).saturating_add(1);
+    if reader.take(limit).read_until(b'\n', &mut buf)? == 0 {
+        return Ok(None);
+    }
+    if buf.last() == Some(&b'\n') {
+        buf.pop();
+        if buf.last() == Some(&b'\r') {
+            buf.pop();
+        }
+    } else if buf.len() > max {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("line longer than {max} bytes")));
+    }
+    String::from_utf8(buf).map(Some).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+}
 
 /// Answers control-protocol methods.
 pub trait Backend {
@@ -155,11 +179,9 @@ impl Remote {
         let line = json!({"id": id, "method": method, "params": params}).to_string();
         let (w, r) = self.conn.as_mut().ok_or_else(|| Failure::NotSent("not connected".into()))?;
         writeln!(w, "{line}").map_err(|e| Failure::NotSent(e.to_string()))?;
-        let mut buf = String::new();
-        r.read_line(&mut buf).map_err(|e| Failure::Unknown(e.to_string()))?;
-        if buf.is_empty() {
-            return Err(Failure::Unknown("connection closed".into()));
-        }
+        let buf = read_line_bounded(r, MAX_LINE)
+            .map_err(|e| Failure::Unknown(e.to_string()))?
+            .ok_or_else(|| Failure::Unknown("connection closed".into()))?;
         let v: Value = serde_json::from_str(&buf).map_err(|e| Failure::Unknown(e.to_string()))?;
         if v.get("ok").and_then(Value::as_bool).unwrap_or(false) {
             Ok(v.get("result").cloned().unwrap_or(Value::Null))

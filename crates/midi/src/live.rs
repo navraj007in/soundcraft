@@ -43,7 +43,7 @@ impl Sequence {
         let mut held: HashMap<(u8, u8), (i64, u8)> = HashMap::new();
         let close = |seq: &mut Sequence, channel: u8, pitch: u8, start: i64, velocity: u8, end: i64, release: u8| {
             if seq.notes.len() < MAX_EVENTS {
-                seq.notes.push(Note { pitch, velocity, release_velocity: release, channel, start, length: (end - start).max(1) });
+                seq.notes.push(Note { pitch, velocity, release_velocity: release, channel, start, length: end.saturating_sub(start).max(1) });
             }
         };
         for &(tick, msg) in events {
@@ -68,7 +68,7 @@ impl Sequence {
         let mut still: Vec<_> = held.into_iter().collect();
         still.sort_unstable();
         for ((channel, pitch), (start, vel)) in still {
-            close(&mut seq, channel, pitch, start, vel, end_tick.max(start + 1), 64);
+            close(&mut seq, channel, pitch, start, vel, end_tick.max(start.saturating_add(1)), 64);
         }
         seq.sort();
         seq
@@ -123,6 +123,17 @@ mod tests {
                 (50, 0, CtrlKind::PolyPressure(60), 12),
             ]
         );
+    }
+
+    #[test]
+    fn ticks_at_the_edge_of_the_range_never_overflow() {
+        // A note still held at i64::MAX, one ended before it began, and extreme end ticks.
+        for end in [i64::MIN, -1, 0, i64::MAX] {
+            let seq = Sequence::from_performance(&[(i64::MAX, [0x90, 60, 100]), (i64::MAX - 1, [0x90, 61, 100]), (5, [0x80, 61, 0])], end);
+            assert!(seq.notes.iter().all(|n| n.length >= 1 && n.start >= 0), "{end}: {:?}", seq.notes);
+        }
+        let seq = Sequence::from_performance(&[(i64::MAX, [0x90, 60, 100]), (i64::MIN, [0x80, 60, 0])], i64::MAX);
+        assert!(seq.notes.iter().all(|n| n.length >= 1));
     }
 
     #[test]

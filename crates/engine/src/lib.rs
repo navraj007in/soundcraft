@@ -200,7 +200,8 @@ impl Engine {
 
     /// Like `session_mut`, for `edit.zoom` only and without bumping `revision`.
     pub fn zoom_mut(&mut self) -> &mut ZoomState {
-        self.dirty = true;
+        // Zooming is not an edit: it does not make the session dirty. (Setting the flag made every
+        // later `is_dirty` compare the whole document just to conclude nothing had changed.)
         &mut Arc::make_mut(&mut self.doc).edit.zoom
     }
 
@@ -529,6 +530,22 @@ mod merge_tests {
         assert_eq!(e.undo_history().len(), 1);
         e.undo();
         assert_eq!(e.session().track(t).unwrap().mixer.volume_db, 0.0);
+    }
+
+    #[test]
+    fn a_freehand_automation_stroke_is_one_undo_step() {
+        let mut e = Engine::default();
+        let t = e.session_mut().add_track(soundcraft_model::TrackKind::Audio, soundcraft_model::ChannelFormat::Mono, None);
+        for (i, v) in [-6.0, -5.0, -3.0, -4.0, -8.0].into_iter().enumerate() {
+            e.execute_merged("automation.set_point", &json!({"track": t.0, "param": "volume", "at": i as i64 * 480, "value": v}), "pencil:1")
+                .unwrap();
+        }
+        e.end_merge();
+        let points = |e: &Engine| e.session().track(t).map_or(0, |tr| tr.automation.iter().map(|l| l.points.len()).sum::<usize>());
+        assert_eq!(points(&e), 5);
+        assert_eq!(e.undo_history().len(), 1, "one step for the whole stroke");
+        e.undo();
+        assert_eq!(points(&e), 0, "undo removes the stroke in one go");
     }
 
     #[test]

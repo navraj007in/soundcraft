@@ -181,6 +181,11 @@ impl Plugin for Compressor {
             for c in 0..ch {
                 let (Some(buf), Some(d)) = (io.get_mut(c), self.delay.get_mut(c)) else { continue };
                 let Some(x) = buf.get_mut(n) else { continue };
+                // A NaN or infinity must not enter the delay line: it would come out `lookahead`
+                // samples later, and keep coming out of every later read of that slot.
+                if !x.is_finite() {
+                    *x = 0.0;
+                }
                 d.push(*x);
                 let dry = if la == 0 { *x } else { d.tap(la + 1) };
                 *x = dry * (1.0 - m) + dry * g * m;

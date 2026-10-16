@@ -45,3 +45,21 @@ F-08 is fixed upstream in PR #573 (open); the rest are open.
 | F-04 | VST3 `set_param` reads a plain-to-normalized curve sampled at creation instead of calling the controller from the audio thread | `curve_tests` (vst3-host). CLAP and AU hosts not yet reviewed for the same race |
 | F-03 | `Job::run` ends the batch in a drop guard, so an unwinding `wake` cannot leave a worker using freed stack | `a_panic_while_waking_workers_leaves_nothing_using_the_callers_data` (rt-pool), also run under Miri |
 | F-25 | `AGENTS.md` layer table lists every crate | n/a |
+
+Second batch (also 16 October):
+
+| ID | Fix | Regression test |
+|---|---|---|
+| F-22 (midi) | `Sequence::from_performance` uses saturating arithmetic at the edges of the tick range; the take's clip length too | `ticks_at_the_edge_of_the_range_never_overflow` (midi) |
+| F-17 | A freehand automation stroke is one undo step | `a_freehand_automation_stroke_is_one_undo_step` (engine) |
+| F-20 | The compressor zeroes a non-finite sample before it enters the lookahead delay | `a_nan_or_infinity_never_comes_out_of_the_lookahead_delay` (dsp) |
+| F-10 | `zoom_mut` no longer marks the session dirty, so `is_dirty` stops comparing the whole document after a zoom | existing `selecting_locating_and_zooming_leave_the_session_clean` |
+| F-16 | MCP and the control client read lines with a 96 MiB bound; an empty JSON-RPC batch is an invalid-request error | `an_empty_batch_is_one_invalid_request_error`, `a_line_over_the_limit_is_refused_and_ends_the_session_without_buffering_it` (automation) |
+| F-19 (part) | Replaced session snapshots the UI thread has not taken are held (room reserved up front) instead of dropped on the audio thread | `a_burst_of_replaced_sessions_is_held_not_freed_on_the_audio_thread` (playback) |
+
+Checked and left as they are: F-15 (hosted-instrument parameters live in the plug-in's own state, which
+is saved with the session; only the dirty flag is not set by GUI edits), F-04 for CLAP (its main and
+audio thread calls follow the CLAP threading contract; only the non-macOS `on_main_thread` guard is
+a stub). Open: F-08 (upstream PR #573), F-09 (the session is cloned per edit; a per-track `Arc` is a
+larger change), F-01 (needs an Audio Unit to confirm), F-07 (design), F-18, F-21 (upstream #448 and
+PR #586), F-23, F-24 and the rest of F-19.

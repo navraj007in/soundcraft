@@ -2382,9 +2382,12 @@ fn finish_drag(app: &mut SoundApp, s: &Session, tl: Rect, p: Option<Pos2>) {
         Some(Gesture::Pencil { track, points }) => {
             if let Some(param) = s.track(track).and_then(|t| AutoParam::parse(&t.view)) {
                 let pid = automation_id(&param);
+                // One stroke is one undo step, however many points it drew.
+                let key = format!("pencil:{}", track.0);
                 for (a, v) in points {
-                    let _ = app.run("automation.set_point", json!({"track": track.0, "param": pid, "at": a, "value": v}));
+                    let _ = app.engine.execute_merged("automation.set_point", &json!({"track": track.0, "param": pid, "at": a, "value": v}), &key);
                 }
+                app.engine.end_merge();
             }
         }
         Some(Gesture::ZoomBox { start }) => {

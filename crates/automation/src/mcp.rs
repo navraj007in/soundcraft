@@ -243,13 +243,36 @@ impl<B: Backend> Server<B> {
     }
 
     /// Serve until EOF.
-    pub fn serve(&mut self, input: impl BufRead, mut out: impl Write) -> std::io::Result<()> {
-        for line in input.lines() {
-            let line = line?;
+    pub fn serve(&mut self, input: impl BufRead, out: impl Write) -> std::io::Result<()> {
+        self.serve_bounded(input, out, crate::MAX_LINE)
+    }
+
+    /// [`Server::serve`] with a chosen longest line. A longer one is answered with an error and ends
+    /// the session (the rest of it would otherwise be read as further requests).
+    pub fn serve_bounded(&mut self, mut input: impl BufRead, mut out: impl Write, max_line: usize) -> std::io::Result<()> {
+        loop {
+            let line = match crate::read_line_bounded(&mut input, max_line) {
+                Ok(Some(line)) => line,
+                Ok(None) => break,
+                Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                    writeln!(
+                        out,
+                        "{}",
+                        json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32600, "message": format!("invalid request: {e}")}})
+                    )?;
+                    out.flush()?;
+                    break;
+                }
+                Err(e) => return Err(e),
+            };
             if line.trim().is_empty() {
                 continue;
             }
             let reply = match serde_json::from_str::<Value>(&line) {
+                // JSON-RPC 2.0: an empty batch is an invalid request, answered with one error.
+                Ok(Value::Array(batch)) if batch.is_empty() => {
+                    Some(json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32600, "message": "invalid request: empty batch"}}))
+                }
                 Ok(Value::Array(batch)) => {
                     let replies: Vec<Value> = batch.iter().filter_map(|m| self.handle(m)).collect();
                     if replies.is_empty() { None } else { Some(Value::Array(replies)) }

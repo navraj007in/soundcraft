@@ -1491,7 +1491,7 @@ pub fn add_midi_recording(
         let Some(tr) = s.track(t) else { continue };
         let name = tr.name.clone();
         let cid = s.new_clip_id();
-        crate::edit::place_clip(s, t, Clip::midi(cid, name, start, end - start, seq.clone()));
+        crate::edit::place_clip(s, t, Clip::midi(cid, name, start, end.saturating_sub(start).max(1), seq.clone()));
         out.push(cid);
     }
     if undo && !out.is_empty() {
