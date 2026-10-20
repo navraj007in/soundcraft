@@ -63,6 +63,11 @@ Parity is measured, not guessed: `crates/engine/catalog/menus.txt` lists the inc
 - Shell gotcha: `mv`/`cp` are aliased interactive here — use `/bin/mv -f` / `/bin/cp -f`.
 - Parallel agents: separate `CARGO_TARGET_DIR` per agent; edit only the crates you own; write manifests atomically; delete your target dir when done (disk).
 
+## Upstream
+This repo is a fork of `storytold/soundcraft`. Keep it in step weekly with `scripts/upstream-sync.sh` and follow
+[`docs/upstream-sync.md`](docs/upstream-sync.md): never commit to the `upstream-main` mirror branch, keep fork-only work in new modules where
+you can, and prefer upstream's version where both sides fixed the same thing.
+
 ## Quality gates (before every commit)
 `cargo xtask ci` = fmt check, `clippy --workspace --all-targets -D warnings`, tests, assets, layers, wasm check. Commit after each arc of work that builds; one topic per commit.
 
