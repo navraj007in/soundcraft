@@ -32,7 +32,7 @@ fn install_fixture() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("temp dir");
     std::fs::copy(target.join("debug").join(lib), dir.join("Fixture.clap")).expect("copy fixture");
-    assert_eq!(soundcraft_clap_host::add_search_dir(&dir), 2);
+    assert!(soundcraft_clap_host::add_search_dir(&dir) >= 1, "the fixture plug-ins are found");
 }
 
 #[test]

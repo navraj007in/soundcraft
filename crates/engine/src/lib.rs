@@ -117,9 +117,6 @@ struct HistoryEntry {
 pub struct Engine {
     doc: Arc<Session>,
     undo: Vec<HistoryEntry>,
-    /// How many undo entries were ever pushed: tells a merged call whether it pushed one, which
-    /// the stack's length cannot once eviction holds it constant.
-    undo_pushes: u64,
     redo: Vec<HistoryEntry>,
     pub history_limit: usize,
     pub clipboard: Clipboard,
@@ -164,7 +161,6 @@ impl Engine {
             saved: Arc::clone(&doc),
             doc,
             undo: Vec::new(),
-            undo_pushes: 0,
             redo: Vec::new(),
             history_limit: 200,
             clipboard: Clipboard::default(),
@@ -294,7 +290,6 @@ impl Engine {
             return;
         }
         self.undo.push(HistoryEntry { label: label.to_string(), doc: before });
-        self.undo_pushes = self.undo_pushes.wrapping_add(1);
         self.redo.clear();
         if self.undo.len() > self.history_limit {
             let excess = self.undo.len() - self.history_limit;
@@ -428,16 +423,17 @@ impl Engine {
     pub fn execute_merged(&mut self, id: &str, params: &Value, key: &str) -> Result<Value> {
         let key = self.merge_hold.clone().unwrap_or_else(|| key.to_string());
         let continuing = self.merge_key.as_ref() == Some(&key);
-        let (before_len, before_pushes, limit) = (self.undo.len(), self.undo_pushes, self.history_limit);
-        if continuing {
-            // The step about to be pushed is dropped again below, so it must not evict the oldest
-            // entry first: the gesture's own first step has to survive at the history cap.
-            self.history_limit = usize::MAX;
+        let before_len = self.undo.len();
+        // The step pushed for a continuing tick is dropped again below, so it must not trim the
+        // oldest entry first when the history is full.
+        let limit = self.history_limit;
+        if continuing && before_len > 0 {
+            self.history_limit = limit.max(before_len.saturating_add(1));
         }
         let r = self.execute(id, params);
         self.history_limit = limit;
         let r = r?;
-        if continuing && self.undo_pushes == before_pushes.wrapping_add(1) && before_len > 0 {
+        if continuing && self.undo.len() == before_len + 1 && before_len > 0 {
             // Drop the step just pushed; the earlier one still holds the pre-gesture document.
             self.undo.pop();
         }
